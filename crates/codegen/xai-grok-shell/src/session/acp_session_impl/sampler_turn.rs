@@ -1503,12 +1503,14 @@ mod configured_cutoff_tests {
             x_search: Some(x_cut("2020-01-01")),
             web_search: Some(WebSearchOptions {
                 allowed_domains: Some(vec!["x.com".into()]),
+                excluded_domains: None,
             }),
         };
         let base = ToolOverrides {
             x_search: Some(x_cut("2019-06-01")),
             web_search: Some(WebSearchOptions {
                 allowed_domains: Some(vec![]),
+                excluded_domains: None,
             }),
         };
         let got = super::resolve_configured_cutoff(Some(seed.clone()), Some(&base));
@@ -1523,6 +1525,7 @@ mod configured_cutoff_tests {
         use xai_grok_sampling_types::{HostedTool, apply_tool_overrides};
         let web = WebSearchOptions {
             allowed_domains: Some(vec!["x.com".into()]),
+            excluded_domains: None,
         };
         let cases = [
             (
