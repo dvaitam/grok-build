@@ -2545,6 +2545,7 @@ fn find_model_by_id_prefers_key_then_falls_back_to_slug() {
         info: config::ModelInfo {
             user_selectable: true,
             id: None,
+            model_family: None,
             model: model.to_string(),
             base_url: String::new(),
             name: None,
@@ -3286,26 +3287,209 @@ async fn diagnostic_upload_skipped_after_mid_session_trace_upload_kill_switch() 
          trace-upload kill switch"
     );
 }
+use crate::session::storage::search::IndexDecision;
+/// A grok home of its own, with the switch left at its registered default.
+/// `decide_search_index` stops short of a session store, but do not reach
+/// `bootstrap_once`: it takes the process-cached `grok_home()`, which these
+/// guards cannot redirect, so it could index the developer's own store.
+fn search_index_env() -> (tempfile::TempDir, [xai_grok_test_support::EnvGuard; 2]) {
+    use xai_grok_test_support::EnvGuard;
+    let home = tempfile::tempdir().unwrap();
+    let guards = [
+        EnvGuard::set("GROK_HOME", home.path()),
+        EnvGuard::unset("GROK_SESSION_SEARCH"),
+    ];
+    (home, guards)
+}
 #[tokio::test]
 #[serial_test::serial]
-async fn session_search_stops_on_a_mid_session_kill_switch() {
-    use crate::session::storage::search_gate;
-    let _env = xai_grok_test_support::EnvGuard::unset("GROK_SESSION_SEARCH");
+async fn search_index_honors_the_session_search_feature() {
+    let (_home, _env) = search_index_env();
+    {
+        let _off = xai_grok_test_support::EnvGuard::set("GROK_SESSION_SEARCH", "0");
+        let agent = build_agent_with_auth(crate::auth::GrokAuth::test_default());
+        agent.decide_search_index();
+        assert!(
+            matches!(agent.search_index(), IndexDecision::Off),
+            "the switch is off, so this process keeps no index"
+        );
+    }
     let agent = build_agent_with_auth(crate::auth::GrokAuth::test_default());
-    let _gate = search_gate::IndexGateGuard::open();
-    agent.apply_session_search_gate();
+    agent.decide_search_index();
     assert!(
-        search_gate::is_index_enabled(),
-        "precondition: nothing has turned the index off"
+        matches!(agent.search_index(), IndexDecision::On(_)),
+        "the feature is on by default, so this process keeps an index"
+    );
+}
+/// Reclaiming is the one irreversible half of the deferred work, and the six hour
+/// throttle then hides the run that could have honored a remote veto.
+#[tokio::test]
+#[serial_test::serial]
+async fn auto_gc_declines_until_the_remote_answer_settles() {
+    let (_home, _env) = search_index_env();
+    let agent = build_agent_with_auth(crate::auth::GrokAuth::test_default());
+    assert!(
+        !agent.remote_settings_settled(),
+        "precondition: remote fetch is on and no settings have arrived"
+    );
+    agent.spawn_auto_worktree_gc();
+    agent.decide_search_index();
+    assert_eq!(
+        agent.auto_gc_spawn_count.get(),
+        0,
+        "a host that never reaches the server must not reclaim under the default policy"
+    );
+    assert!(
+        matches!(agent.search_index(), IndexDecision::On(_)),
+        "the index still decides, since running without one is what cannot be undone; got {:?}",
+        agent.search_index(),
+    );
+    agent.cfg.borrow_mut().remote_settings = Some(crate::util::config::RemoteSettings::default());
+    agent.spawn_auto_worktree_gc();
+    assert_eq!(
+        agent.auto_gc_spawn_count.get(),
+        1,
+        "once the server has answered it reclaims, or the guard would just never run"
+    );
+}
+#[tokio::test]
+#[serial_test::serial]
+async fn search_before_the_decision_asks_the_caller_to_retry() {
+    let (_home, _env) = search_index_env();
+    let agent = build_agent_with_auth(crate::auth::GrokAuth::test_default());
+    assert!(
+        matches!(agent.search_index(), IndexDecision::Pending),
+        "precondition: nothing has decided yet"
+    );
+    let resp = crate::session::storage::search::execute_search(
+        agent.search_index(),
+        &crate::util::grok_home::grok_home(),
+        &crate::session::storage::search::SessionSearchRequest {
+            query: "zzqqpending".to_string(),
+            cwd: None,
+            limit: 10,
+            offset: 0,
+            include_content: false,
+        },
+    )
+    .await
+    .unwrap();
+    assert!(
+        resp.bootstrapping,
+        "an undecided process must not answer final"
+    );
+    assert!(resp.results.is_empty());
+}
+/// A leader boots with no remote settings, so if the first reader resolved the
+/// feature the registered default would latch before the server could answer.
+#[tokio::test]
+#[serial_test::serial]
+async fn read_before_the_remote_settings_land_does_not_decide() {
+    let (_home, _env) = search_index_env();
+    let agent = build_agent_with_auth(crate::auth::GrokAuth::test_default());
+    assert!(
+        !agent.remote_settings_settled(),
+        "precondition: remote fetch is on and no settings have arrived"
+    );
+    assert!(
+        matches!(agent.search_index(), IndexDecision::Pending),
+        "reading must not settle the question; got {:?}",
+        agent.search_index(),
     );
     agent.cfg.borrow_mut().remote_settings = Some(crate::util::config::RemoteSettings {
         session_search: Some(false),
         ..Default::default()
     });
-    agent.apply_session_search_gate();
+    assert!(agent.remote_settings_settled());
+    agent.decide_search_index();
     assert!(
-        !search_gate::is_index_enabled(),
-        "a remote kill switch must reach the indexer without a new session"
+        matches!(agent.search_index(), IndexDecision::Off),
+        "the remote kill switch decided, so this process keeps no index; got {:?}",
+        agent.search_index(),
+    );
+}
+/// A host with no identity to fetch with never receives remote settings, so
+/// waiting for them would cost it an index for the whole run.
+#[tokio::test]
+#[serial_test::serial]
+async fn exhausted_fetch_decides_on_the_local_layers() {
+    use crate::agent::config::Config as AgentConfig;
+    use crate::auth::{AuthManager, GrokComConfig};
+    use xai_grok_test_support::EnvGuard;
+    let (_home, _env) = search_index_env();
+    let _no_inline_auth = EnvGuard::unset("GROK_AUTH");
+    let _no_auth_path = EnvGuard::unset("GROK_AUTH_PATH");
+    let auth_dir = tempfile::tempdir().unwrap();
+    let auth_manager =
+        std::sync::Arc::new(AuthManager::new(auth_dir.path(), GrokComConfig::default()));
+    assert!(
+        auth_manager.current().is_none(),
+        "precondition: no identity to fetch with"
+    );
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+    let agent = MvpAgent::new(
+        GatewaySender::new(tx),
+        &AgentConfig::default(),
+        auth_manager,
+        None,
+    )
+    .expect("valid test config");
+    assert!(
+        !agent.remote_settings_settled(),
+        "precondition: remote fetch is on and no settings have arrived"
+    );
+    agent.maybe_fetch_post_auth_settings().await;
+    assert!(
+        matches!(agent.search_index(), IndexDecision::On(_)),
+        "a signed out host decides on its local layers rather than keeping no index"
+    );
+}
+/// Once decided, a later switch cannot take the index away: serving one that
+/// stopped absorbing writes is worse than keeping it until the next launch.
+#[tokio::test]
+#[serial_test::serial]
+async fn kill_switch_after_the_decision_leaves_the_index_up() {
+    let (_home, _env) = search_index_env();
+    let agent = build_agent_with_auth(crate::auth::GrokAuth::test_default());
+    agent.cfg.borrow_mut().remote_settings = Some(crate::util::config::RemoteSettings {
+        session_search: Some(true),
+        ..Default::default()
+    });
+    agent.decide_search_index();
+    assert!(
+        matches!(agent.search_index(), IndexDecision::On(_)),
+        "precondition: indexing"
+    );
+    agent.cfg.borrow_mut().remote_settings = Some(crate::util::config::RemoteSettings {
+        session_search: Some(false),
+        ..Default::default()
+    });
+    agent.decide_search_index();
+    assert!(
+        matches!(agent.search_index(), IndexDecision::On(_)),
+        "a switch arriving after the decision must not tear down a live index"
+    );
+}
+/// Sessions hold the decision itself, not the answer as it stood when they
+/// opened, which would otherwise be `None` for the rest of their life.
+#[tokio::test]
+#[serial_test::serial]
+async fn session_opened_before_the_decision_sees_it_land() {
+    let (_home, _env) = search_index_env();
+    let agent = build_agent_with_auth(crate::auth::GrokAuth::test_default());
+    let held_by_a_session = agent.search_index_cell();
+    assert!(
+        matches!(held_by_a_session.decision(), IndexDecision::Pending),
+        "precondition: the session opened before anything decided"
+    );
+    agent.cfg.borrow_mut().remote_settings = Some(crate::util::config::RemoteSettings {
+        session_search: Some(true),
+        ..Default::default()
+    });
+    agent.decide_search_index();
+    assert!(
+        matches!(held_by_a_session.decision(), IndexDecision::On(_)),
+        "the session indexes as soon as the decision lands"
     );
 }
 /// The live collection gate reads a `Send` mirror of the config-level

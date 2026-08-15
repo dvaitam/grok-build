@@ -151,6 +151,9 @@ fn test_app() -> AppView {
         ))],
         auth_state: AuthState::Done,
         trust_state: TrustState::Done,
+        consent_state: crate::app::consent::ConsentState::Done,
+        account_email: None,
+        consent_answered: None,
         login_label: None,
         login_method_id: None,
         auth_start_mode: AuthMode::Pending,
@@ -788,6 +791,7 @@ fn make_picker_entry(id: &str, cwd: &str) -> crate::app::app_view::SessionPicker
         repo_name: "repo".into(),
         worktree_label: None,
         last_turn_summary: None,
+        last_recap: None,
         card_detail: None,
     }
 }

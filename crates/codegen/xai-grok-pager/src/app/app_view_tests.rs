@@ -163,6 +163,9 @@ pub(crate) fn test_app() -> AppView {
         auth_methods: Vec::new(),
         auth_state: AuthState::Done,
         trust_state: TrustState::Done,
+        consent_state: crate::app::consent::ConsentState::Done,
+        account_email: None,
+        consent_answered: None,
         login_label: None,
         login_method_id: None,
         auth_start_mode: AuthMode::Pending,
@@ -765,6 +768,7 @@ fn tick_demand_fast_while_modal_session_picker_loads() {
         repo_name: "r".into(),
         worktree_label: None,
         last_turn_summary: None,
+        last_recap: None,
         card_detail: None,
     };
     if let Some(crate::views::modal::ActiveModal::SessionPicker { entries, .. }) =
@@ -2100,6 +2104,7 @@ fn welcome_session_entry(id: &str) -> SessionPickerEntry {
         repo_name: "tmp-repo".into(),
         worktree_label: None,
         last_turn_summary: None,
+        last_recap: None,
         card_detail: None,
     }
 }
@@ -2192,6 +2197,133 @@ fn welcome_trust_decline_keys_quit() {
     };
     let outcome = app.handle_input(&key_event(KeyCode::Char('y'), KeyModifiers::NONE));
     assert!(matches!(outcome, InputOutcome::Action(Action::TrustFolder)));
+}
+/// A notice already on screen, with both menu rows painted.
+fn consent_pending_app() -> AppView {
+    use crate::app::consent::{ConsentLegibility, ConsentNotice};
+    use ratatui::layout::Rect;
+    let mut app = test_app();
+    app.trust_state = TrustState::Pending {
+        workspace: std::path::PathBuf::from("/tmp/x"),
+    };
+    app.consent_state = crate::app::consent::ConsentState::Pending {
+        notice: ConsentNotice {
+            id: "notice".to_string(),
+            version: 1,
+            title: "Title".to_string(),
+            body: "Review the terms.".to_string(),
+            accept_label: "Accept".to_string(),
+        },
+        legibility: ConsentLegibility::Painted,
+        painted_at: Some(std::time::Instant::now()),
+    };
+    app.welcome_menu_rects = vec![Rect::new(10, 20, 30, 1), Rect::new(10, 21, 30, 1)];
+    app
+}
+/// Accept is `a` alone. `y` belongs to the trust question one screen later, Enter may be buffered,
+/// and the rest have no meaning here.
+#[test]
+fn welcome_consent_answers_only_to_its_own_keys() {
+    for code in [
+        KeyCode::Char('y'),
+        KeyCode::Char('n'),
+        KeyCode::Esc,
+        KeyCode::Enter,
+        KeyCode::Char(' '),
+        KeyCode::Tab,
+    ] {
+        let mut app = consent_pending_app();
+        let outcome = app.handle_input(&key_event(code, KeyModifiers::NONE));
+        assert!(
+            matches!(outcome, InputOutcome::Unchanged),
+            "{code:?} must not answer the notice, got {outcome:?}",
+        );
+    }
+    let mut app = consent_pending_app();
+    assert!(matches!(
+        app.handle_input(&key_event(KeyCode::Char('a'), KeyModifiers::NONE)),
+        InputOutcome::Action(Action::AcceptConsent)
+    ));
+    let mut app = consent_pending_app();
+    assert!(matches!(app.handle_input(&ctrl_c()), InputOutcome::Changed));
+    assert!(
+        app.pending_action.is_some(),
+        "the first Ctrl+C must arm the confirmation"
+    );
+    let mut app = consent_pending_app();
+    assert!(
+        matches!(
+            app.handle_input(&key_event(KeyCode::Char('q'), KeyModifiers::NONE)),
+            InputOutcome::Action(Action::Quit)
+        ),
+        "the screen offers Quit, so the key has to work",
+    );
+}
+/// A key that reached the process before the notice painted was aimed at the screen before it.
+#[test]
+fn welcome_consent_ignores_an_accept_key_typed_before_it_painted() {
+    use crate::app::consent::ConsentState;
+    let mut app = consent_pending_app();
+    let painted = match &app.consent_state {
+        ConsentState::Pending { painted_at, .. } => painted_at.expect("painted"),
+        ConsentState::Done => unreachable!(),
+    };
+    let typed_earlier = painted - std::time::Duration::from_millis(1);
+    let outcome = app.handle_input_at_with_paste_provenance(
+        &key_event(KeyCode::Char('a'), KeyModifiers::NONE),
+        typed_earlier,
+        crate::app::app_view::PasteProvenance::Terminal,
+    );
+    assert!(
+        matches!(outcome, InputOutcome::Unchanged),
+        "a key that predates the notice was aimed at the composer, got {outcome:?}",
+    );
+}
+#[test]
+fn welcome_consent_menu_rows_are_clickable() {
+    let click = |col, row| left_mouse(MouseEventKind::Down(MouseButton::Left), col, row);
+    let mut app = consent_pending_app();
+    assert!(matches!(
+        app.handle_input(&click(12, 20)),
+        InputOutcome::Action(Action::AcceptConsent)
+    ));
+    let mut app = consent_pending_app();
+    assert!(matches!(
+        app.handle_input(&click(12, 21)),
+        InputOutcome::Action(Action::Quit)
+    ));
+    let mut app = consent_pending_app();
+    if let crate::app::consent::ConsentState::Pending { painted_at, .. } = &mut app.consent_state {
+        *painted_at = None;
+    }
+    assert!(matches!(
+        app.handle_input(&click(12, 20)),
+        InputOutcome::Action(Action::Quit)
+    ));
+}
+#[test]
+fn welcome_consent_hover_tracks_the_menu_row() {
+    let mut app = consent_pending_app();
+    app.welcome_menu_rects.truncate(1);
+    let moved = |col, row| left_mouse(MouseEventKind::Moved, col, row);
+    assert!(matches!(
+        app.handle_input(&moved(12, 20)),
+        InputOutcome::Changed
+    ));
+    assert_eq!(app.welcome_menu_index, Some(0));
+    assert!(matches!(
+        app.handle_input(&moved(30, 20)),
+        InputOutcome::Unchanged
+    ));
+    assert!(matches!(
+        app.handle_input(&moved(0, 0)),
+        InputOutcome::Changed
+    ));
+    assert_eq!(app.welcome_menu_index, None);
+    assert!(matches!(
+        app.handle_input(&moved(1, 0)),
+        InputOutcome::Unchanged
+    ));
 }
 #[test]
 fn welcome_ctrl_c_requires_confirmation() {
@@ -6228,6 +6360,7 @@ fn welcome_picker_f_cycle_disabled_under_chat_mode() {
         repo_name: "r".into(),
         worktree_label: None,
         last_turn_summary: None,
+        last_recap: None,
         card_detail: None,
     };
     let f_key = Event::Key(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE));

@@ -436,13 +436,16 @@ impl MvpAgent {
             crate::session::persistence::new(
                 &session_info,
                 model_id,
-                summary_client,
-                self.storage_mode.get(),
-                Some(self.auth_manager.clone()),
-                relay_sync,
-                Some(self.gateway.clone()),
-                summary_model,
-                registry_title_sync,
+                crate::session::persistence::SessionDeps {
+                    sampling_client: summary_client,
+                    storage_mode: self.storage_mode.get(),
+                    auth_manager: Some(self.auth_manager.clone()),
+                    relay_sync,
+                    gateway: Some(self.gateway.clone()),
+                    session_summary_model: summary_model,
+                    registry_title_sync,
+                    search_index: self.search_index_cell(),
+                },
             )
             .await
             .map_err(|e| crate::session::persistence::io_error_to_acp(&e))?
@@ -775,14 +778,17 @@ impl MvpAgent {
         let registry_title_sync = self.registry_title_sync();
         let (persistence_info, persistence) = crate::session::persistence::load_light(
             &session_info,
-            summary_client,
-            self.storage_mode.get(),
-            Some(self.auth_manager.clone()),
             backend.as_ref(),
-            relay_sync,
-            Some(self.gateway.clone()),
-            summary_model,
-            registry_title_sync,
+            crate::session::persistence::SessionDeps {
+                sampling_client: summary_client,
+                storage_mode: self.storage_mode.get(),
+                auth_manager: Some(self.auth_manager.clone()),
+                relay_sync,
+                gateway: Some(self.gateway.clone()),
+                session_summary_model: summary_model,
+                registry_title_sync,
+                search_index: self.search_index_cell(),
+            },
         )
         .await
         .map_err(|e| crate::session::persistence::io_error_to_acp(&e))?;

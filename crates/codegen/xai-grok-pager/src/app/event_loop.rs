@@ -341,6 +341,29 @@ fn seed_trust_state(
     };
 }
 
+/// Must run before the first render, or the startup-intent block opens a session behind the gate
+/// and the first frame shows the normal welcome.
+pub(crate) fn seed_consent_state_from_gate(
+    app: &mut AppView,
+    gate: Option<&xai_grok_shell::util::config::ConsentGate>,
+) {
+    use crate::app::consent::{ConsentInputs, consent_verdict};
+    let stored = xai_grok_shell::config::load_from_disk()
+        .ok()
+        .map(|root| xai_grok_shell::util::config::load_config_from_toml(&root).consent)
+        .unwrap_or_default();
+    app.consent_state = consent_verdict(&ConsentInputs {
+        gate,
+        answered_this_run: app
+            .consent_answered
+            .as_ref()
+            .map(|(id, version)| (id.as_str(), *version)),
+        answers: &stored.answers,
+        account: app.account_email.as_deref(),
+        minimal: app.screen_mode.is_minimal(),
+    });
+}
+
 /// Pause terminal input and wait up to `timeout` for the reader to acknowledge.
 /// Returns with the pause still asserted; the handoff owner resumes the reader.
 fn park_input_reader(
@@ -1594,6 +1617,13 @@ pub(crate) async fn run(
     // Feature-off (kill-switch / opt-out / local build) resolves `Trusted`, so
     // this stays `TrustState::Done`.
     seed_trust_state(&mut app, remote_settings.as_ref());
+    seed_consent_state_from_gate(
+        &mut app,
+        remote_settings
+            .as_ref()
+            .and_then(|s| s.consent_gate.as_ref()),
+    );
+
     // Type-ahead captured while the app was still loading (see `init_terminal`),
     // replayed only when the composer is already the active input consumer; a
     // startup screen still being up means the keys are dropped, not replayed.

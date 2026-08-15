@@ -253,6 +253,13 @@ pub enum SessionCommand {
     /// reverse-request so the client re-shows approval chrome over a real live
     /// waiter. Fire-and-forget; the actor spawns the round-trip + decision.
     RestorePlanApproval,
+    /// A `/rename` landed for this resident session. `manual: true` (a user
+    /// title) freezes the auto title refresh and aborts any in-flight one;
+    /// `manual: false` (`/rename --auto`) reopens it so the whole-conversation
+    /// refresh can re-title.
+    TitleRenamed {
+        manual: bool,
+    },
     GetToolOverrides {
         respond_to: oneshot::Sender<Option<xai_grok_sampling_types::ToolOverrides>>,
     },
