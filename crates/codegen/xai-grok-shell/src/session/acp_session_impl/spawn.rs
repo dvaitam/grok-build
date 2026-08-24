@@ -300,6 +300,7 @@ pub(crate) async fn spawn_session_actor(
     forked_tool_override: Option<Vec<ToolSpec>>,
     is_chat_kind: bool,
     spawn_timer: Option<xai_grok_telemetry::subagent_spawn::SharedSubagentSpawnTimer>,
+    sampling_gate: Option<Arc<tokio::sync::Semaphore>>,
 ) -> Result<
     (
         SessionHandle,
@@ -1820,6 +1821,7 @@ pub(crate) async fn spawn_session_actor(
         turn_stream_drained: parking_lot::Mutex::new(None),
         pending_image_strip: parking_lot::Mutex::new(None),
         sampler_handle,
+        sampling_gate,
         rebuild_spec: rebuild_spec.clone(),
         image_description_model,
         image_describe_cache: Arc::new(crate::session::image_describe::ImageDescribeCache::new()),
@@ -2340,6 +2342,7 @@ pub(crate) async fn spawn_session_on_thread(
     forked_tool_override: Option<Vec<ToolSpec>>,
     is_chat_kind: bool,
     spawn_timer: Option<xai_grok_telemetry::subagent_spawn::SharedSubagentSpawnTimer>,
+    sampling_gate: Option<Arc<tokio::sync::Semaphore>>,
 ) -> Result<
     (
         SessionHandle,
@@ -2513,6 +2516,7 @@ pub(crate) async fn spawn_session_on_thread(
                         forked_tool_override,
                         is_chat_kind,
                         spawn_timer,
+                        sampling_gate,
                     )
                     .await
                     {
