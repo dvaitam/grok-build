@@ -81,6 +81,21 @@ Clients connect over WebSocket and authenticate with the secret token. If you om
 
 This is a server you run yourself — Grok's hosted cloud sandboxes do not run `grok agent serve`.
 
+`serve` also hosts a browser page at `http://<bind>/`. The page is the same client as `grok agent web`.
+
+---
+
+## Browser on the LAN
+
+```bash
+grok agent --trust --always-approve web
+grok agent web --bind 0.0.0.0:2419 --secret <token>
+```
+
+`web` listens on every interface (default `0.0.0.0:2419`) and prints URLs you can open from this machine or another machine on the LAN. The page talks to the agent over WebSocket at `/ws` and streams session messages: assistant text, reasoning, tool calls, plans, permission prompts, and questions.
+
+The startup print includes the server key. Traffic is plaintext HTTP, so use a network you trust. One browser owns the live stream; opening the page again takes over. Pass `--always-approve` to skip tool prompts, and `--trust` to trust the working directory.
+
 ---
 
 ## WebSocket relay

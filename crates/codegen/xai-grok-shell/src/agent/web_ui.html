@@ -1,0 +1,1034 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grok</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #101114;
+    --bg-raised: #181a1f;
+    --bg-user: #23262e;
+    --line: #2c3038;
+    --text: #eceae6;
+    --muted: #9b978f;
+    --accent: #e8f27a;
+    --accent-ink: #1a1c12;
+    --danger: #ff8d7a;
+    --ok: #8fd9a5;
+    --warn: #e6c07b;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --sans: "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.45;
+  }
+  button, input, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  a { color: var(--accent); }
+  /* ID rules below set display, which would otherwise beat the UA [hidden] style. */
+  [hidden] { display: none !important; }
+  #gate, #app { min-height: 100%; }
+  #gate {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: min(440px, 100%);
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 28px 24px;
+  }
+  .card h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: -0.03em; }
+  .card p { margin: 0 0 18px; color: var(--muted); }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input[type="password"], input[type="text"], textarea {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  textarea { resize: vertical; min-height: 52px; }
+  .row { display: flex; gap: 8px; }
+  .primary, .ghost, .danger {
+    border-radius: 10px;
+    border: 1px solid transparent;
+    padding: 9px 14px;
+  }
+  .primary { background: var(--accent); color: var(--accent-ink); font-weight: 650; }
+  .ghost { background: transparent; border-color: var(--line); color: var(--text); }
+  .danger { background: transparent; border-color: #5a3030; color: var(--danger); }
+  .error { color: var(--danger); min-height: 1.2em; margin: 10px 0 0; font-size: 13px; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  header.app-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    background: rgba(16, 17, 20, 0.92);
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+  .brand { font-weight: 700; letter-spacing: -0.03em; }
+  .meta { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .spacer { flex: 1; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.on { background: var(--ok); }
+  .dot.busy { background: var(--warn); }
+  .dot.bad { background: var(--danger); }
+  #log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 18px 16px 8px;
+  }
+  .empty { color: var(--muted); max-width: 46rem; margin: 12vh auto 0; text-align: center; }
+  .msg { max-width: 52rem; margin: 0 auto 14px; }
+  .msg.user .bubble {
+    background: var(--bg-user);
+    border-radius: 14px 14px 4px 14px;
+    padding: 10px 14px;
+    white-space: pre-wrap;
+    margin-left: 18%;
+  }
+  .msg .who { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .msg.assistant .body, .thought .body { white-space: normal; }
+  .msg.assistant .body p { margin: 0 0 0.6em; }
+  .body code, pre.code {
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  .body code { background: #242830; padding: 0 4px; border-radius: 4px; }
+  pre.code {
+    background: #0c0d10;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    white-space: pre-wrap;
+  }
+  .thought, .tool, .plan, .system {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--bg-raised);
+    margin-top: 8px;
+  }
+  .thought { padding: 8px 12px; color: var(--muted); }
+  .thought summary { cursor: pointer; }
+  .tool { padding: 8px 12px; }
+  .tool header, .plan header { display: flex; gap: 8px; align-items: baseline; }
+  .tool .kind, .status {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+  }
+  .status.completed { color: var(--ok); }
+  .status.failed { color: var(--danger); }
+  .status.in_progress, .status.pending { color: var(--warn); }
+  .tool pre, .plan { margin: 8px 0 0; }
+  .tool pre {
+    font-family: var(--mono);
+    font-size: 12px;
+    white-space: pre-wrap;
+    max-height: 240px;
+    overflow: auto;
+    color: #c9c6bf;
+  }
+  .plan { padding: 8px 12px; }
+  .plan li { margin: 4px 0; }
+  .system { padding: 8px 12px; color: var(--muted); font-size: 13px; }
+  .msg img.shot { max-width: min(100%, 480px); border-radius: 8px; display: block; margin-top: 8px; }
+  footer.composer {
+    border-top: 1px solid var(--line);
+    padding: 12px 16px 16px;
+    background: var(--bg);
+  }
+  .composer-inner { max-width: 52rem; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  footer textarea { min-height: 48px; max-height: 200px; }
+  #wire {
+    border-top: 1px solid var(--line);
+    background: #0c0d10;
+    max-height: 34vh;
+    overflow: auto;
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 8px 12px;
+    color: #b7b3aa;
+    white-space: pre-wrap;
+  }
+  #wire[hidden] { display: none; }
+  .modal-back {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 16px;
+    z-index: 5;
+  }
+  .modal-back[hidden] { display: none; }
+  .modal {
+    width: min(640px, 100%);
+    max-height: min(80vh, 720px);
+    overflow: auto;
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 18px;
+  }
+  .q { margin: 14px 0; }
+  .opt { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; }
+  .opt small { display: block; color: var(--muted); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  @media (max-width: 700px) {
+    .msg.user .bubble { margin-left: 0; }
+    header.app-bar { flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+<div id="gate">
+  <form class="card" id="gate-form">
+    <h1>Grok</h1>
+    <p>Enter the server key printed when you started <code>grok agent web</code>. The page then streams the session over WebSocket.</p>
+    <label for="key">Server key</label>
+    <input id="key" type="password" autocomplete="off" spellcheck="false" required>
+    <p class="error" id="gate-error"></p>
+    <div class="actions"><button class="primary" type="submit">Connect</button></div>
+  </form>
+</div>
+<div id="app" hidden>
+  <header class="app-bar">
+    <span class="dot" id="dot"></span>
+    <span class="brand">Grok</span>
+    <span class="meta" id="status">Connecting</span>
+    <span class="meta" id="cwd"></span>
+    <span class="spacer"></span>
+    <button class="ghost" id="wire-btn" type="button">Wire</button>
+    <button class="ghost" id="new-btn" type="button">New</button>
+  </header>
+  <main id="log">
+    <div class="empty" id="empty">The session streams here. Send a message to start.</div>
+  </main>
+  <pre id="wire" hidden></pre>
+  <footer class="composer">
+    <form class="composer-inner" id="composer">
+      <textarea id="prompt" rows="2" placeholder="Message Grok" disabled></textarea>
+      <button class="primary" id="send" type="submit" disabled>Send</button>
+      <button class="danger" id="stop" type="button" hidden>Stop</button>
+    </form>
+  </footer>
+</div>
+<div class="modal-back" id="modal" hidden>
+  <div class="modal" id="modal-card" role="dialog" aria-modal="true"></div>
+</div>
+<script>
+(() => {
+  const KEY_STORE = "grokAgentServerKey";
+  const gate = document.getElementById("gate");
+  const app = document.getElementById("app");
+  const logEl = document.getElementById("log");
+  const statusEl = document.getElementById("status");
+  const cwdEl = document.getElementById("cwd");
+  const dot = document.getElementById("dot");
+  const promptEl = document.getElementById("prompt");
+  const sendBtn = document.getElementById("send");
+  const stopBtn = document.getElementById("stop");
+  const wireEl = document.getElementById("wire");
+  const modal = document.getElementById("modal");
+  const modalCard = document.getElementById("modal-card");
+
+  const ui = {
+    ws: null,
+    key: "",
+    cwd: "",
+    sessionId: "",
+    nextId: 1,
+    pending: new Map(),
+    turn: false,
+    replaying: false,
+    echo: false,
+    ready: false,
+    backoff: 1000,
+    tools: new Map(),
+    stream: null,
+    thought: null,
+    stick: true,
+    wireCount: 0,
+  };
+
+  function params() {
+    return new URLSearchParams(location.search);
+  }
+
+  function storedKey() {
+    const fromUrl = params().get("server-key") || params().get("key") || "";
+    if (fromUrl) {
+      localStorage.setItem(KEY_STORE, fromUrl);
+      const clean = new URL(location.href);
+      clean.searchParams.delete("server-key");
+      clean.searchParams.delete("key");
+      history.replaceState(null, "", clean.pathname + clean.search + clean.hash);
+      return fromUrl;
+    }
+    return localStorage.getItem(KEY_STORE) || "";
+  }
+
+  function errText(err) {
+    if (!err) return "request failed";
+    if (typeof err === "string") return err;
+    const extra = typeof err.data === "string" ? ": " + err.data : "";
+    return (err.message || "request failed") + extra;
+  }
+
+  function setStatus(text, kind) {
+    statusEl.textContent = text;
+    dot.className = "dot" + (kind ? " " + kind : "");
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function renderMarkdown(src) {
+    const fences = [];
+    let text = String(src).replace(/```([^\n`]*)\n?([\s\S]*?)```/g, (_, _lang, code) => {
+      const i = fences.length;
+      fences.push("<pre class=\"code\"><code>" + escapeHtml(code.replace(/\n$/, "")) + "</code></pre>");
+      return "\u0000F" + i + "\u0000";
+    });
+    text = escapeHtml(text);
+    text = text.replace(/`([^`]+)`/g, "<code>$1</code>");
+    text = text.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, "<a href=\"$2\" target=\"_blank\" rel=\"noopener noreferrer\">$1</a>");
+    text = text.replace(/\n/g, "<br>");
+    return text.replace(/\u0000F(\d+)\u0000/g, (_, i) => fences[Number(i)] || "");
+  }
+
+  function nearBottom() {
+    return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 80;
+  }
+
+  function follow() {
+    if (ui.stick) logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  logEl.addEventListener("scroll", () => { ui.stick = nearBottom(); });
+
+  function hideEmpty() {
+    const node = document.getElementById("empty");
+    if (node) node.remove();
+  }
+
+  function addEl(node) {
+    hideEmpty();
+    logEl.appendChild(node);
+    follow();
+    return node;
+  }
+
+  function systemLine(text) {
+    const el = document.createElement("div");
+    el.className = "msg system";
+    el.textContent = text;
+    return addEl(el);
+  }
+
+  function closeStream() {
+    ui.stream = null;
+    ui.thought = null;
+  }
+
+  function assistantBody() {
+    if (ui.stream) return ui.stream;
+    const wrap = document.createElement("div");
+    wrap.className = "msg assistant";
+    const who = document.createElement("div");
+    who.className = "who";
+    who.textContent = "Grok";
+    const body = document.createElement("div");
+    body.className = "body";
+    wrap.append(who, body);
+    addEl(wrap);
+    ui.stream = { wrap, body, text: "" };
+    return ui.stream;
+  }
+
+  function appendAssistant(text) {
+    if (!text) return;
+    const block = assistantBody();
+    block.text += text;
+    block.body.innerHTML = renderMarkdown(block.text);
+    follow();
+  }
+
+  function appendImage(mime, data) {
+    const block = assistantBody();
+    const img = document.createElement("img");
+    img.className = "shot";
+    img.alt = "";
+    img.src = "data:" + mime + ";base64," + data;
+    block.wrap.appendChild(img);
+    follow();
+  }
+
+  function appendThought(text) {
+    if (!text) return;
+    if (!ui.thought) {
+      const details = document.createElement("details");
+      details.className = "thought";
+      details.open = true;
+      const summary = document.createElement("summary");
+      summary.textContent = "Thinking";
+      const body = document.createElement("div");
+      body.className = "body";
+      details.append(summary, body);
+      const wrap = document.createElement("div");
+      wrap.className = "msg";
+      wrap.appendChild(details);
+      addEl(wrap);
+      ui.thought = { body, text: "" };
+    }
+    ui.thought.text += text;
+    ui.thought.body.innerHTML = renderMarkdown(ui.thought.text);
+    follow();
+  }
+
+  function clip(text) {
+    const s = String(text);
+    if (s.length <= 8000) return s;
+    return s.slice(0, 8000) + "\n… truncated";
+  }
+
+  function stringify(value) {
+    if (typeof value === "string") return value;
+    try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+  }
+
+  function toolText(content) {
+    if (!Array.isArray(content)) return "";
+    const parts = [];
+    for (const item of content) {
+      if (!item) continue;
+      if (item.type === "content" && item.content) {
+        if (item.content.type === "text") parts.push(item.content.text || "");
+        else if (item.content.text) parts.push(item.content.text);
+      } else if (item.type === "diff") {
+        parts.push((item.path || "diff") + "\n" + (item.newText || item.new_text || ""));
+      } else if (item.type === "text") {
+        parts.push(item.text || "");
+      }
+    }
+    return parts.filter(Boolean).join("\n");
+  }
+
+  function paintTool(tool) {
+    let el = tool.el;
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "tool";
+      const header = document.createElement("header");
+      const kind = document.createElement("span");
+      kind.className = "kind";
+      const title = document.createElement("span");
+      title.className = "title";
+      const status = document.createElement("span");
+      const pre = document.createElement("pre");
+      header.append(kind, title, status);
+      el.append(header, pre);
+      const wrap = document.createElement("div");
+      wrap.className = "msg";
+      wrap.appendChild(el);
+      addEl(wrap);
+      tool.el = el;
+      tool.kindEl = kind;
+      tool.titleEl = title;
+      tool.statusEl = status;
+      tool.pre = pre;
+    }
+    tool.kindEl.textContent = tool.kind || "tool";
+    tool.titleEl.textContent = tool.title || "Tool";
+    tool.statusEl.className = "status " + (tool.status || "");
+    tool.statusEl.textContent = (tool.status || "pending").replaceAll("_", " ");
+    tool.pre.textContent = tool.body || "";
+    tool.pre.hidden = !tool.body;
+    follow();
+  }
+
+  function upsertTool(update) {
+    const id = update.toolCallId || update.tool_call_id || "";
+    if (!id) return;
+    const prev = ui.tools.get(id) || { id, title: "Tool", status: "pending", kind: "", body: "" };
+    if (update.title) prev.title = update.title;
+    if (update.status) prev.status = update.status;
+    if (update.kind) prev.kind = update.kind;
+    const fromContent = toolText(update.content);
+    if (fromContent) prev.body = clip(fromContent);
+    else if (update.rawOutput != null) prev.body = clip(stringify(update.rawOutput));
+    else if (update.rawInput != null && !prev.body) prev.body = clip(stringify(update.rawInput));
+    ui.tools.set(id, prev);
+    closeStream();
+    paintTool(prev);
+  }
+
+  function renderPlan(update) {
+    const entries = Array.isArray(update.entries) ? update.entries : [];
+    let el = document.getElementById("live-plan");
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "live-plan";
+      el.className = "plan";
+      const wrap = document.createElement("div");
+      wrap.className = "msg";
+      wrap.appendChild(el);
+      addEl(wrap);
+    }
+    el.replaceChildren();
+    const header = document.createElement("header");
+    const title = document.createElement("strong");
+    title.textContent = "Plan";
+    header.appendChild(title);
+    const list = document.createElement("ol");
+    for (const entry of entries) {
+      const li = document.createElement("li");
+      const status = entry.status ? "[" + String(entry.status).replaceAll("_", " ") + "] " : "";
+      li.textContent = status + (entry.content || "");
+      list.appendChild(li);
+    }
+    el.append(header, list);
+    follow();
+  }
+
+  function chunkPieces(update) {
+    const content = update.content;
+    if (!content) return;
+    if (content.type === "image" && content.data) {
+      appendImage(content.mimeType || "image/png", content.data);
+      return;
+    }
+    const text = content.text || "";
+    if (update.sessionUpdate === "agent_thought_chunk") appendThought(text);
+    else appendAssistant(text);
+  }
+
+  function onSessionUpdate(update) {
+    if (ui.replaying) return;
+    const kind = update && update.sessionUpdate;
+    if (kind === "agent_message_chunk") chunkPieces(update);
+    else if (kind === "agent_thought_chunk") chunkPieces(update);
+    else if (kind === "user_message_chunk") {
+      if (!ui.echo) {
+        const text = (update.content && update.content.text) || "";
+        if (text) userBubble(text);
+      }
+    } else if (kind === "tool_call" || kind === "tool_call_update") upsertTool(update);
+    else if (kind === "plan") renderPlan(update);
+    else if (kind === "session_info_update" && typeof update.title === "string" && update.title) {
+      document.title = update.title + " · Grok";
+    } else if (kind === "current_mode_update" && update.currentModeId) {
+      setStatus(statusEl.textContent, dot.classList.contains("busy") ? "busy" : "on");
+      cwdEl.textContent = (ui.cwd || "") + " · " + update.currentModeId;
+    } else if (kind === "available_commands_update" || kind === "config_option_update") {
+      return;
+    } else if (kind) {
+      systemLine(kind);
+    }
+  }
+
+  function userBubble(text) {
+    closeStream();
+    const wrap = document.createElement("div");
+    wrap.className = "msg user";
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    wrap.appendChild(bubble);
+    addEl(wrap);
+  }
+
+  function logWire(dir, raw) {
+    ui.wireCount += 1;
+    const btn = document.getElementById("wire-btn");
+    btn.textContent = "Wire " + ui.wireCount;
+    const line = (dir === "out" ? "→ " : "← ") + raw;
+    wireEl.textContent += (wireEl.textContent ? "\n" : "") + line;
+    const extra = wireEl.textContent.length - 200000;
+    if (extra > 0) wireEl.textContent = wireEl.textContent.slice(extra);
+    wireEl.scrollTop = wireEl.scrollHeight;
+  }
+
+  function send(obj) {
+    const raw = JSON.stringify(obj);
+    logWire("out", raw);
+    if (!ui.ws || ui.ws.readyState !== WebSocket.OPEN) throw new Error("not connected");
+    ui.ws.send(raw);
+  }
+
+  function rpc(method, params) {
+    const id = ui.nextId++;
+    return new Promise((resolve, reject) => {
+      ui.pending.set(id, { resolve, reject });
+      try {
+        send({ jsonrpc: "2.0", id, method, params });
+      } catch (err) {
+        ui.pending.delete(id);
+        reject(err);
+      }
+    });
+  }
+
+  function notify(method, params) {
+    send({ jsonrpc: "2.0", method, params });
+  }
+
+  function reply(id, result) {
+    send({ jsonrpc: "2.0", id, result });
+  }
+
+  function replyError(id, message) {
+    send({ jsonrpc: "2.0", id, error: { code: -32601, message } });
+  }
+
+  function unwrap(msg) {
+    let method = msg.method || "";
+    let params = msg.params || {};
+    if (method.startsWith("_")) {
+      method = method.slice(1);
+      if (params && typeof params.method === "string" && params.params && typeof params.params === "object") {
+        method = params.method;
+        params = params.params;
+      }
+    }
+    return { method, params };
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+    modalCard.replaceChildren();
+  }
+
+  function showModal(node) {
+    modalCard.replaceChildren(node);
+    modal.hidden = false;
+  }
+
+  function permissionModal(id, params) {
+    const box = document.createElement("div");
+    const title = document.createElement("h2");
+    const tool = params.toolCall || {};
+    title.textContent = tool.title || "Permission";
+    const detail = document.createElement("p");
+    detail.textContent = toolText(tool.content) || stringify(tool.rawInput || "");
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const options = Array.isArray(params.options) ? params.options : [];
+    for (const opt of options) {
+      const btn = document.createElement("button");
+      const kind = opt.kind || "";
+      btn.className = kind.startsWith("reject") ? "danger" : "primary";
+      btn.type = "button";
+      btn.textContent = opt.name || opt.optionId || "Choose";
+      btn.addEventListener("click", () => {
+        closeModal();
+        reply(id, { outcome: { outcome: "selected", optionId: opt.optionId } });
+      });
+      actions.appendChild(btn);
+    }
+    box.append(title, detail, actions);
+    showModal(box);
+  }
+
+  function questionModal(id, params) {
+    const questions = Array.isArray(params.questions) ? params.questions : [];
+    const box = document.createElement("form");
+    const title = document.createElement("h2");
+    title.textContent = "Question";
+    box.appendChild(title);
+    questions.forEach((q, index) => {
+      const block = document.createElement("div");
+      block.className = "q";
+      const h = document.createElement("strong");
+      h.textContent = q.question || "Question";
+      block.appendChild(h);
+      const multi = Boolean(q.multiSelect || q.multi_select);
+      (q.options || []).forEach((opt, optIndex) => {
+        const row = document.createElement("label");
+        row.className = "opt";
+        const input = document.createElement("input");
+        input.type = multi ? "checkbox" : "radio";
+        input.name = "q" + index;
+        input.value = opt.label || "";
+        if (!multi && optIndex === 0) input.checked = true;
+        const text = document.createElement("span");
+        text.textContent = opt.label || "";
+        if (opt.description) {
+          const small = document.createElement("small");
+          small.textContent = opt.description;
+          text.appendChild(small);
+        }
+        row.append(input, text);
+        block.appendChild(row);
+      });
+      const notes = document.createElement("textarea");
+      notes.placeholder = "Other";
+      notes.dataset.notes = String(index);
+      block.appendChild(notes);
+      box.appendChild(block);
+    });
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const submit = document.createElement("button");
+    submit.className = "primary";
+    submit.type = "submit";
+    submit.textContent = "Send answers";
+    const cancel = document.createElement("button");
+    cancel.className = "ghost";
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => {
+      closeModal();
+      reply(id, { outcome: "cancelled" });
+    });
+    actions.append(submit, cancel);
+    if (params.mode === "plan") {
+      const chat = document.createElement("button");
+      chat.className = "ghost";
+      chat.type = "button";
+      chat.textContent = "Chat about this";
+      chat.addEventListener("click", () => {
+        closeModal();
+        reply(id, { outcome: "chat_about_this", partial_answers: {} });
+      });
+      const skip = document.createElement("button");
+      skip.className = "ghost";
+      skip.type = "button";
+      skip.textContent = "Skip";
+      skip.addEventListener("click", () => {
+        closeModal();
+        reply(id, { outcome: "skip_interview", partial_answers: {} });
+      });
+      actions.append(chat, skip);
+    }
+    box.appendChild(actions);
+    box.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const answers = {};
+      const annotations = {};
+      questions.forEach((q, index) => {
+        const picked = [...box.querySelectorAll("input[name='q" + index + "']:checked")].map((el) => el.value);
+        const notes = box.querySelector("textarea[data-notes='" + index + "']");
+        const extra = notes ? notes.value.trim() : "";
+        const key = q.question || String(index);
+        if (picked.length) {
+          answers[key] = picked;
+          if (extra) annotations[key] = { notes: extra };
+        } else if (extra) {
+          answers[key] = ["Other"];
+          annotations[key] = { notes: extra };
+        }
+      });
+      if (Object.keys(answers).length < questions.length) {
+        systemLine("Answer each question, or use Cancel.");
+        return;
+      }
+      closeModal();
+      const result = { outcome: "accepted", answers };
+      if (Object.keys(annotations).length) result.annotations = annotations;
+      reply(id, result);
+    });
+    showModal(box);
+  }
+
+  function planModal(id, params) {
+    const box = document.createElement("div");
+    const title = document.createElement("h2");
+    title.textContent = "Approve plan";
+    const pre = document.createElement("pre");
+    pre.className = "code";
+    pre.textContent = params.planContent || params.plan_content || "";
+    const feedback = document.createElement("textarea");
+    feedback.placeholder = "What should change?";
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const approve = document.createElement("button");
+    approve.className = "primary";
+    approve.type = "button";
+    approve.textContent = "Approve";
+    approve.addEventListener("click", () => {
+      closeModal();
+      reply(id, { outcome: "approved" });
+    });
+    const revise = document.createElement("button");
+    revise.className = "ghost";
+    revise.type = "button";
+    revise.textContent = "Revise";
+    revise.addEventListener("click", () => {
+      closeModal();
+      const note = feedback.value.trim();
+      const result = { outcome: "cancelled" };
+      if (note) result.feedback = note;
+      reply(id, result);
+    });
+    actions.append(approve, revise);
+    box.append(title, pre, feedback, actions);
+    showModal(box);
+  }
+
+  function onRequest(msg) {
+    const { method, params } = unwrap(msg);
+    if (method === "session/request_permission") permissionModal(msg.id, params);
+    else if (method === "x.ai/ask_user_question") questionModal(msg.id, params);
+    else if (method === "x.ai/exit_plan_mode") planModal(msg.id, params);
+    else {
+      systemLine("Unhandled request " + method);
+      replyError(msg.id, "Method not found: " + method);
+    }
+  }
+
+  function onNote(msg) {
+    const { method, params } = unwrap(msg);
+    if (method === "session/update" && params.update) onSessionUpdate(params.update);
+    else if (method === "x.ai/session_notification" && params.update && params.update.sessionUpdate) {
+      const kind = params.update.sessionUpdate;
+      const mirrored = kind === "agent_message_chunk" || kind === "agent_thought_chunk"
+        || kind === "user_message_chunk" || kind === "tool_call" || kind === "tool_call_update"
+        || kind === "plan" || kind === "session_info_update" || kind === "current_mode_update"
+        || kind === "available_commands_update" || kind === "config_option_update";
+      if (!mirrored) onSessionUpdate(params.update);
+    }
+  }
+
+  function onFrame(raw) {
+    logWire("in", raw);
+    let msg;
+    try { msg = JSON.parse(raw); } catch { return; }
+    if (msg.method && msg.id != null) {
+      onRequest(msg);
+      return;
+    }
+    if (msg.method) {
+      onNote(msg);
+      return;
+    }
+    if (msg.id != null && ui.pending.has(msg.id)) {
+      const waiter = ui.pending.get(msg.id);
+      ui.pending.delete(msg.id);
+      if (msg.error) waiter.reject(msg.error);
+      else waiter.resolve(msg.result);
+    }
+  }
+
+  function setTurn(on) {
+    ui.turn = on;
+    ui.echo = on;
+    sendBtn.hidden = on;
+    stopBtn.hidden = !on;
+    promptEl.disabled = !ui.ready || on;
+    sendBtn.disabled = !ui.ready || on;
+    if (on) setStatus("Working", "busy");
+    else if (ui.ready) setStatus(ui.sessionId ? "Ready" : "Connected", "on");
+  }
+
+  function clearTranscript() {
+    ui.tools.clear();
+    ui.stream = null;
+    ui.thought = null;
+    logEl.replaceChildren();
+    const hint = document.createElement("div");
+    hint.className = "empty";
+    hint.id = "empty";
+    hint.textContent = "The session streams here. Send a message to start.";
+    logEl.appendChild(hint);
+  }
+
+  async function openSession(reload) {
+    if (reload && ui.sessionId) {
+      ui.replaying = true;
+      try {
+        await rpc("session/load", { sessionId: ui.sessionId, cwd: ui.cwd, mcpServers: [] });
+      } catch {
+        ui.sessionId = "";
+      }
+      ui.replaying = false;
+    }
+    if (!ui.sessionId) {
+      const created = await rpc("session/new", { cwd: ui.cwd, mcpServers: [] });
+      ui.sessionId = created.sessionId || created.session_id || "";
+    }
+    if (!ui.sessionId) throw new Error("session was not created");
+    ui.ready = true;
+    setTurn(false);
+    cwdEl.textContent = ui.cwd;
+  }
+
+  async function handshake(reload) {
+    setStatus("Starting agent", "busy");
+    await rpc("initialize", {
+      protocolVersion: 1,
+      clientInfo: { name: "grok-web", version: "1.0.0" },
+      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
+    });
+    await openSession(reload);
+    ui.backoff = 1000;
+  }
+
+  function connect(reload) {
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const url = proto + "//" + location.host + "/ws?server-key=" + encodeURIComponent(ui.key);
+    const ws = new WebSocket(url);
+    ui.ws = ws;
+    ws.addEventListener("open", () => {
+      handshake(reload).catch((err) => {
+        systemLine(errText(err));
+        setStatus("Session failed", "bad");
+      });
+    });
+    ws.addEventListener("message", (event) => {
+      if (typeof event.data === "string") onFrame(event.data);
+    });
+    ws.addEventListener("close", () => {
+      ui.ready = false;
+      promptEl.disabled = true;
+      sendBtn.disabled = true;
+      for (const [id, waiter] of ui.pending) {
+        ui.pending.delete(id);
+        waiter.reject(new Error("connection closed"));
+      }
+      setStatus("Reconnecting", "bad");
+      const wait = ui.backoff;
+      ui.backoff = Math.min(ui.backoff * 2, 8000);
+      setTimeout(() => {
+        if (ui.ws === ws) connect(true);
+      }, wait);
+    });
+  }
+
+  async function boot(key) {
+    ui.key = key;
+    const errorEl = document.getElementById("gate-error");
+    const button = document.querySelector("#gate-form button");
+    errorEl.textContent = "";
+    button.disabled = true;
+    button.textContent = "Connecting…";
+    try {
+      const info = await fetch("/api/info?server-key=" + encodeURIComponent(key));
+      if (info.status === 401) {
+        localStorage.removeItem(KEY_STORE);
+        throw new Error("That key was rejected.");
+      }
+      if (!info.ok) throw new Error("The server did not return a working directory.");
+      const body = await info.json();
+      if (!body.cwd) throw new Error("The server did not return a working directory.");
+      ui.cwd = body.cwd;
+      localStorage.setItem(KEY_STORE, key);
+      gate.hidden = true;
+      app.hidden = false;
+      cwdEl.textContent = ui.cwd;
+      connect(false);
+    } catch (err) {
+      errorEl.textContent = err.message || String(err);
+      button.disabled = false;
+      button.textContent = "Connect";
+      throw err;
+    }
+  }
+
+  document.getElementById("gate-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const key = document.getElementById("key").value.trim();
+    boot(key).catch((err) => {
+      document.getElementById("gate-error").textContent = err.message || String(err);
+    });
+  });
+
+  document.getElementById("composer").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const text = promptEl.value.trim();
+    if (!text || !ui.ready || ui.turn) return;
+    promptEl.value = "";
+    userBubble(text);
+    setTurn(true);
+    rpc("session/prompt", {
+      sessionId: ui.sessionId,
+      prompt: [{ type: "text", text }],
+    }).then((result) => {
+      const reason = result && (result.stopReason || result.stop_reason);
+      if (reason && reason !== "end_turn" && reason !== "endTurn") systemLine("Stopped: " + reason);
+    }).catch((err) => {
+      systemLine(errText(err));
+    }).finally(() => setTurn(false));
+  });
+
+  promptEl.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      document.getElementById("composer").requestSubmit();
+    }
+  });
+
+  stopBtn.addEventListener("click", () => {
+    if (!ui.sessionId) return;
+    try { notify("session/cancel", { sessionId: ui.sessionId }); } catch { /* socket already gone */ }
+    closeModal();
+  });
+
+  document.getElementById("new-btn").addEventListener("click", async () => {
+    if (!ui.ready) return;
+    if (ui.turn) {
+      try { notify("session/cancel", { sessionId: ui.sessionId }); } catch { /* ignore */ }
+    }
+    ui.sessionId = "";
+    clearTranscript();
+    setStatus("Starting session", "busy");
+    try {
+      await openSession(false);
+    } catch (err) {
+      systemLine(errText(err));
+      setStatus("Session failed", "bad");
+    }
+  });
+
+  document.getElementById("wire-btn").addEventListener("click", () => {
+    wireEl.hidden = !wireEl.hidden;
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !modal.hidden) {
+      const cancel = modalCard.querySelector("button.danger, button.ghost");
+      if (cancel) cancel.click();
+    }
+  });
+
+  const initial = storedKey();
+  if (initial) {
+    document.getElementById("key").value = initial;
+    boot(initial).catch((err) => {
+      gate.hidden = false;
+      app.hidden = true;
+      document.getElementById("gate-error").textContent = err.message || String(err);
+    });
+  }
+})();
+</script>
+<noscript>This page needs JavaScript to stream the session over WebSocket.</noscript>
+</body>
+</html>

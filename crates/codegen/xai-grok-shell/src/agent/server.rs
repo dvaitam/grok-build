@@ -14,13 +14,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
 use axum::{
-    Router,
+    Json, Router,
     extract::{
         ConnectInfo, Query, State,
         ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade, close_code},
     },
-    http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    http::{HeaderMap, StatusCode, header},
+    response::{Html, IntoResponse, Response},
     routing::get,
 };
 use futures::{SinkExt, StreamExt};
@@ -604,8 +604,107 @@ fn setup_acp_connection(
     });
 }
 
+const WEB_UI_HTML: &str = include_str!("web_ui.html");
+
+/// Browser URLs for this bind address.
+/// An unspecified address (`0.0.0.0` or `::`) is advertised as loopback plus `lan_hosts`, so another machine on the LAN can open the page.
+/// A specific bind address is the only host advertised.
+pub fn browser_urls(bind: SocketAddr, lan_hosts: &[std::net::IpAddr], secret: &str) -> Vec<String> {
+    use std::net::{IpAddr, Ipv4Addr};
+    let key = percent_encode(secret);
+    let mut hosts = Vec::new();
+    if bind.ip().is_unspecified() {
+        hosts.push(IpAddr::V4(Ipv4Addr::LOCALHOST));
+        for ip in lan_hosts {
+            if ip.is_loopback() || ip.is_unspecified() || hosts.contains(ip) {
+                continue;
+            }
+            hosts.push(*ip);
+        }
+    } else {
+        hosts.push(bind.ip());
+    }
+    let port = bind.port();
+    hosts
+        .into_iter()
+        .map(|ip| {
+            let host = match ip {
+                IpAddr::V4(v4) => v4.to_string(),
+                IpAddr::V6(v6) => format!("[{v6}]"),
+            };
+            format!("http://{host}:{port}/?server-key={key}")
+        })
+        .collect()
+}
+
+fn percent_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(char::from(byte));
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
+async fn web_index() -> impl IntoResponse {
+    ([(header::CACHE_CONTROL, "no-cache")], Html(WEB_UI_HTML))
+}
+
+async fn favicon() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
+
+async fn api_info(
+    State(state): State<Arc<ServerState>>,
+    headers: HeaderMap,
+    Query(query): Query<WsQueryParams>,
+) -> Response {
+    if !validate_auth(&headers, &query, &state.secret) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            "Invalid or missing authorization token",
+        )
+            .into_response();
+    }
+    let Ok(cwd) = std::env::current_dir() else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not resolve working directory",
+        )
+            .into_response();
+    };
+    let Some(cwd) = cwd.to_str() else {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "working directory is not utf-8",
+        )
+            .into_response();
+    };
+    if !std::path::Path::new(cwd).is_absolute() {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "working directory is not absolute",
+        )
+            .into_response();
+    }
+    Json(serde_json::json!({ "cwd": cwd })).into_response()
+}
+
+fn agent_router(state: Arc<ServerState>) -> Router {
+    Router::new()
+        .route("/", get(web_index))
+        .route("/favicon.ico", get(favicon))
+        .route("/api/info", get(api_info))
+        .route("/ws", get(ws_handler))
+        .with_state(state)
+}
+
 /// Run the agent WebSocket server.
-/// This starts a WebSocket server that accepts authenticated connections from remote TUI clients.
+/// This starts a WebSocket server that accepts authenticated connections from remote TUI clients and from the browser UI at `/`.
 /// A single agent instance is shared across all connections (persisted across reconnections) so in-flight session work survives client disconnects.
 pub async fn run_agent_server(
     config: ServerConfig,
@@ -618,12 +717,13 @@ pub async fn run_agent_server(
         boot_gen: AtomicU64::new(0),
     });
 
-    let app = Router::new()
-        .route("/ws", get(ws_handler))
-        .with_state(state);
+    let app = agent_router(state);
 
     let listener = TcpListener::bind(config.bind_addr).await?;
-    info!("Agent server listening on ws://{}/ws", config.bind_addr);
+    info!(
+        "Agent server listening on http://{}/ and ws://{}/ws",
+        config.bind_addr, config.bind_addr
+    );
     info!(
         "Clients should connect with: --remote ws://{}:{}/ws --secret <token>",
         config.bind_addr.ip(),

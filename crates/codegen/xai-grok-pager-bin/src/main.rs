@@ -199,19 +199,109 @@ fn resolve_agent_profile_path(path: &std::path::Path) -> std::path::PathBuf {
         }
     }
 }
-/// Print startup information for the serve command.
-fn print_serve_startup_info(bind_addr: SocketAddr, secret: &str) {
+enum HttpBanner {
+    Serve,
+    Web,
+}
+/// Print the browser and WebSocket URLs for `agent serve` and `agent web`.
+fn print_http_startup(bind_addr: SocketAddr, secret: &str, banner: HttpBanner) {
+    let lan: Vec<std::net::IpAddr> = lan_ipv4_addrs()
+        .into_iter()
+        .map(std::net::IpAddr::V4)
+        .collect();
+    let urls = xai_grok_shell::agent::server::browser_urls(bind_addr, &lan, secret);
     eprintln!();
-    eprintln!("   Grok agent server starting...");
+    match banner {
+        HttpBanner::Web => {
+            eprintln!("   Grok web UI");
+            eprintln!();
+            eprintln!(
+                "   Open a URL below in a browser on this machine or another machine on the LAN."
+            );
+            eprintln!("   The page streams every session message over WebSocket.");
+        }
+        HttpBanner::Serve => {
+            eprintln!("   Grok agent server");
+            eprintln!();
+            eprintln!("   ACP WebSocket: ws://{bind_addr}/ws?server-key={secret}");
+            eprintln!();
+            eprintln!("   Browser UI:");
+        }
+    }
     eprintln!();
-    eprintln!("   Address:  {}:{}", bind_addr.ip(), bind_addr.port());
-    eprintln!("   Secret:   {}", secret);
+    for url in &urls {
+        eprintln!("   {url}");
+    }
     eprintln!();
-    eprintln!(
-        "   WebSocket URL: ws://{}/ws?server-key={}",
-        bind_addr, secret
-    );
+    if bind_addr.ip().is_loopback() {
+        eprintln!(
+            "   This address accepts only this machine. For the LAN, run `grok agent web` or pass --bind 0.0.0.0:{}",
+            bind_addr.port()
+        );
+        eprintln!();
+    }
+    eprintln!("   Listening: {bind_addr}");
+    eprintln!("   Secret:    {secret}");
+    eprintln!("   WebSocket: /ws on the same host, with the server key above.");
+    eprintln!("   Traffic on the LAN is not encrypted. Use a network you trust.");
+    eprintln!("   One browser owns the live stream. A new connection takes over.");
     eprintln!();
+}
+/// IPv4 addresses of non-loopback interfaces, for the LAN URLs printed at startup.
+fn lan_ipv4_addrs() -> Vec<std::net::Ipv4Addr> {
+    #[cfg(unix)]
+    {
+        lan_ipv4_addrs_unix()
+    }
+    #[cfg(not(unix))]
+    {
+        Vec::new()
+    }
+}
+#[cfg(unix)]
+fn lan_ipv4_addrs_unix() -> Vec<std::net::Ipv4Addr> {
+    let mut out = Vec::new();
+    // SAFETY: getifaddrs either fails or writes a list we walk and then free with freeifaddrs.
+    // Each ifa_addr is a sockaddr owned by that list for the duration of the walk.
+    unsafe {
+        let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
+        if libc::getifaddrs(&mut ifap) != 0 {
+            return out;
+        }
+        let mut cursor = ifap;
+        while !cursor.is_null() {
+            let ifa = &*cursor;
+            if !ifa.ifa_addr.is_null() && i32::from((*ifa.ifa_addr).sa_family) == libc::AF_INET {
+                let sa = &*ifa.ifa_addr.cast::<libc::sockaddr_in>();
+                let ip = std::net::Ipv4Addr::from(u32::from_be(sa.sin_addr.s_addr));
+                if !ip.is_loopback() && !ip.is_unspecified() && !out.contains(&ip) {
+                    out.push(ip);
+                }
+            }
+            cursor = ifa.ifa_next;
+        }
+        libc::freeifaddrs(ifap);
+    }
+    out
+}
+async fn start_http_agent(
+    bind: SocketAddr,
+    secret: String,
+    headless: HeadlessArgs,
+    agent_config: &AgentConfig,
+    banner: HttpBanner,
+) -> Result<()> {
+    let mut agent_config = agent_config.clone();
+    apply_headless_args_to_config(&headless, &mut agent_config);
+    print_http_startup(bind, &secret, banner);
+    xai_grok_shell::agent::run_agent_server(
+        xai_grok_shell::agent::ServerConfig {
+            bind_addr: bind,
+            secret,
+        },
+        agent_config,
+    )
+    .await
 }
 /// Entrypoint tag for `grok -p`; keys the quiet stderr default in `init_tracing_simple`.
 const HEADLESS_ENTRYPOINT: &str = "headless";
@@ -1235,7 +1325,13 @@ async fn run_agent_command(
     let signal_flush = agent_command::spawn_signal_flush();
     if matches!(
         agent_args.mode,
-        Some(AgentCmd::Leader(_) | AgentCmd::Stdio | AgentCmd::Headless(_) | AgentCmd::Serve(_))
+        Some(
+            AgentCmd::Leader(_)
+                | AgentCmd::Stdio
+                | AgentCmd::Headless(_)
+                | AgentCmd::Serve(_)
+                | AgentCmd::Web(_),
+        )
     ) {
         xai_grok_shell::agent::app::suppress_otel();
     }
@@ -1376,7 +1472,7 @@ async fn run_agent_command(
         entrypoint: match &agent_args.mode {
             Some(AgentCmd::Stdio) => Entrypoint::Embedded,
             Some(AgentCmd::Leader(_)) => Entrypoint::Leader,
-            Some(AgentCmd::Serve(_)) => Entrypoint::Workspace,
+            Some(AgentCmd::Serve(_) | AgentCmd::Web(_)) => Entrypoint::Workspace,
             Some(AgentCmd::Headless(_)) | None => Entrypoint::Headless,
         },
         leader: if use_leader || matches!(agent_args.mode, Some(AgentCmd::Leader(_))) {
@@ -1608,15 +1704,24 @@ async fn run_agent_command(
             .await
         }
         Some(AgentCmd::Serve(a)) => {
-            let mut agent_config = agent_config.clone();
-            apply_headless_args_to_config(&a.headless, &mut agent_config);
-            let secret = a.get_secret();
-            let server_config = xai_grok_shell::agent::ServerConfig {
-                bind_addr: a.bind,
-                secret: secret.clone(),
-            };
-            print_serve_startup_info(a.bind, &secret);
-            xai_grok_shell::agent::run_agent_server(server_config, agent_config).await
+            start_http_agent(
+                a.bind,
+                a.get_secret(),
+                a.headless,
+                &agent_config,
+                HttpBanner::Serve,
+            )
+            .await
+        }
+        Some(AgentCmd::Web(a)) => {
+            start_http_agent(
+                a.bind,
+                a.get_secret(),
+                a.headless,
+                &agent_config,
+                HttpBanner::Web,
+            )
+            .await
         }
         Some(AgentCmd::Leader(a)) => {
             let mut agent_config = agent_config.clone();

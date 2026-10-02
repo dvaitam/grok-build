@@ -334,6 +334,9 @@ pub enum AgentCmd {
     Headless(HeadlessArgs),
     /// Run the agent as a WebSocket server
     Serve(ServeArgs),
+    /// Serve a browser UI and stream the session over WebSocket.
+    /// Binds every interface so another machine on the LAN can open the printed URL.
+    Web(WebArgs),
     /// Run as the shared leader process for other clients
     Leader(LeaderArgs),
 }
@@ -362,6 +365,27 @@ pub struct ServeArgs {
     pub headless: HeadlessArgs,
 }
 impl ServeArgs {
+    /// Get the secret, generating a random one if not provided.
+    pub fn get_secret(&self) -> String {
+        self.secret
+            .clone()
+            .unwrap_or_else(|| generate_random_key(12))
+    }
+}
+/// Arguments for `agent web`. Same authentication as `agent serve`, with a LAN bind by default.
+#[derive(Debug, clap::Args, Clone)]
+pub struct WebArgs {
+    /// Address to listen on. `0.0.0.0` accepts browsers on this machine and on the LAN.
+    #[arg(long, default_value = "0.0.0.0:2419")]
+    pub bind: SocketAddr,
+    /// Secret token for client authentication (auto-generated if not provided)
+    #[arg(long, env = "GROK_AGENT_SECRET")]
+    pub secret: Option<String>,
+    /// Authentication and WebSocket URL overrides
+    #[command(flatten)]
+    pub headless: HeadlessArgs,
+}
+impl WebArgs {
     /// Get the secret, generating a random one if not provided.
     pub fn get_secret(&self) -> String {
         self.secret
@@ -1197,6 +1221,18 @@ mod tests {
             agent.canonical_plugin_dirs(),
             vec![dunce::canonicalize(&dir).unwrap()]
         );
+    }
+    #[test]
+    fn web_command_defaults_to_lan() {
+        let args = PagerArgs::try_parse_from(["grok", "agent", "web"]).unwrap();
+        let Some(Command::Agent(agent)) = args.command else {
+            panic!("expected agent subcommand");
+        };
+        let Some(AgentCmd::Web(web)) = agent.mode else {
+            panic!("expected web mode");
+        };
+        assert_eq!(web.bind, "0.0.0.0:2419".parse().unwrap());
+        assert!(web.secret.is_none());
     }
     #[test]
     fn resolve_startup_sandbox_cases() {

@@ -140,3 +140,115 @@ async fn matching_fail_boot_resets_slot() {
     let _ = fail_boot(&slot, 3).await;
     assert!(matches!(*slot.lock().await, AgentSlot::Down));
 }
+
+#[test]
+fn browser_urls_include_lan_hosts_when_unspecified() {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    let bind: SocketAddr = "0.0.0.0:2419".parse().unwrap();
+    let urls = super::browser_urls(
+        bind,
+        &[
+            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+        ],
+        "a b",
+    );
+    assert_eq!(
+        urls,
+        vec![
+            "http://127.0.0.1:2419/?server-key=a%20b".to_string(),
+            "http://192.168.1.20:2419/?server-key=a%20b".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn browser_urls_stay_on_explicit_bind() {
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+    let bind: SocketAddr = "127.0.0.1:9".parse().unwrap();
+    let urls = super::browser_urls(bind, &[IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2))], "k");
+    assert_eq!(urls, vec!["http://127.0.0.1:9/?server-key=k".to_string()]);
+}
+
+#[tokio::test]
+async fn web_ui_serves_page_and_gates_info() {
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+    use std::time::Duration;
+
+    use super::{AgentConfig, AgentSlot, ServerState, agent_router};
+
+    let state = Arc::new(ServerState {
+        agent_config: AgentConfig::default(),
+        secret: "test-secret".to_string(),
+        agent_slot: tokio::sync::Mutex::new(AgentSlot::Down),
+        boot_gen: AtomicU64::new(0),
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            agent_router(state).into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
+    struct Stop(tokio::task::JoinHandle<()>);
+    impl Drop for Stop {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+    let _stop = Stop(server);
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .unwrap();
+    let mut index = None;
+    for _ in 0..20 {
+        match client.get(format!("http://{addr}/")).send().await {
+            Ok(response) => {
+                index = Some(response);
+                break;
+            }
+            Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+        }
+    }
+    let index = index.expect("index route must accept connections");
+    assert_eq!(index.status(), reqwest::StatusCode::OK);
+    let html = index.text().await.unwrap();
+    assert!(html.contains("/ws?server-key="));
+    assert!(html.contains("session/prompt"));
+    assert!(html.contains("session/update"));
+    assert!(
+        html.contains("[hidden] { display: none !important; }"),
+        "author display rules must not keep #gate or #app visible when hidden"
+    );
+
+    let denied = client
+        .get(format!("http://{addr}/api/info"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let wrong = client
+        .get(format!("http://{addr}/api/info?server-key=nope"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let ok = client
+        .get(format!("http://{addr}/api/info?server-key=test-secret"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok.status(), reqwest::StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&ok.text().await.unwrap()).unwrap();
+    let cwd = body.get("cwd").and_then(|value| value.as_str()).unwrap();
+    assert!(std::path::Path::new(cwd).is_absolute());
+}

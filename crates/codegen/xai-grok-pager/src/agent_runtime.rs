@@ -57,9 +57,10 @@ impl Backend {
     fn for_command(self, command: Option<&AgentCmd>) -> Backend {
         match command {
             Some(AgentCmd::Stdio) => self,
-            None | Some(AgentCmd::Headless(_) | AgentCmd::Serve(_) | AgentCmd::Leader(_)) => {
-                Backend::Shell
-            }
+            None
+            | Some(
+                AgentCmd::Headless(_) | AgentCmd::Serve(_) | AgentCmd::Web(_) | AgentCmd::Leader(_),
+            ) => Backend::Shell,
         }
     }
 }
