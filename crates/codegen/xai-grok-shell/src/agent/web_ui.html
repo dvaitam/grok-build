@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Grok</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
   :root {
     color-scheme: dark;
@@ -89,11 +90,27 @@
   .dot.on { background: var(--ok); }
   .dot.busy { background: var(--warn); }
   .dot.bad { background: var(--danger); }
-  #log {
+  #log, #picker {
     flex: 1;
     overflow-y: auto;
     padding: 18px 16px 8px;
   }
+  .picker-card { max-width: 40rem; margin: 4vh auto 0; }
+  .picker-card h2 { margin: 0 0 8px; letter-spacing: -0.03em; }
+  .picker-card > p { color: var(--muted); margin: 0 0 16px; }
+  .session-row {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-top: 8px;
+  }
+  .session-row.current { border-color: var(--accent); }
+  .session-row strong { display: block; }
+  .session-row small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
   .empty { color: var(--muted); max-width: 46rem; margin: 12vh auto 0; text-align: center; }
   .msg { max-width: 52rem; margin: 0 auto 14px; }
   .msg.user .bubble {
@@ -205,7 +222,7 @@
 <div id="gate">
   <form class="card" id="gate-form">
     <h1>Grok</h1>
-    <p>Enter the server key printed when you started <code>grok agent web</code>. The page then streams the session over WebSocket.</p>
+    <p>Enter the server key printed when you started <code>grok agent web</code>. Then resume a conversation or start a new one.</p>
     <label for="key">Server key</label>
     <input id="key" type="password" autocomplete="off" spellcheck="false" required>
     <p class="error" id="gate-error"></p>
@@ -220,8 +237,19 @@
     <span class="meta" id="cwd"></span>
     <span class="spacer"></span>
     <button class="ghost" id="wire-btn" type="button">Wire</button>
+    <button class="ghost" id="sessions-btn" type="button">Sessions</button>
     <button class="ghost" id="new-btn" type="button">New</button>
   </header>
+  <div id="picker" hidden>
+    <div class="picker-card">
+      <h2>Conversations</h2>
+      <p>Resume one conversation, or start a new one. This tab only shows the conversation you pick.</p>
+      <button class="primary" id="picker-new" type="button">New conversation</button>
+      <button class="ghost" id="picker-back" type="button" hidden>Back</button>
+      <div id="picker-list"></div>
+      <p class="error" id="picker-error"></p>
+    </div>
+  </div>
   <main id="log">
     <div class="empty" id="empty">The session streams here. Send a message to start.</div>
   </main>
@@ -240,6 +268,7 @@
 <script>
 (() => {
   const KEY_STORE = "grokAgentServerKey";
+  const SESSION_STORE = "grokWebSessionId";
   const gate = document.getElementById("gate");
   const app = document.getElementById("app");
   const logEl = document.getElementById("log");
@@ -267,6 +296,7 @@
     backoff: 1000,
     tools: new Map(),
     stream: null,
+    userStream: null,
     thought: null,
     stick: true,
     wireCount: 0,
@@ -358,8 +388,29 @@
     ui.thought = null;
   }
 
+  function closeUser() {
+    ui.userStream = null;
+  }
+
+  function appendUser(text) {
+    if (!text) return;
+    closeStream();
+    if (!ui.userStream) {
+      const wrap = document.createElement("div");
+      wrap.className = "msg user";
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      wrap.appendChild(bubble);
+      addEl(wrap);
+      ui.userStream = bubble;
+    }
+    ui.userStream.textContent += text;
+    follow();
+  }
+
   function assistantBody() {
     if (ui.stream) return ui.stream;
+    closeUser();
     const wrap = document.createElement("div");
     wrap.className = "msg assistant";
     const who = document.createElement("div");
@@ -394,6 +445,7 @@
   function appendThought(text) {
     if (!text) return;
     if (!ui.thought) {
+      closeUser();
       const details = document.createElement("details");
       details.className = "thought";
       details.open = true;
@@ -477,6 +529,7 @@
   function upsertTool(update) {
     const id = update.toolCallId || update.tool_call_id || "";
     if (!id) return;
+    closeUser();
     const prev = ui.tools.get(id) || { id, title: "Tool", status: "pending", kind: "", body: "" };
     if (update.title) prev.title = update.title;
     if (update.status) prev.status = update.status;
@@ -531,14 +584,13 @@
   }
 
   function onSessionUpdate(update) {
-    if (ui.replaying) return;
     const kind = update && update.sessionUpdate;
     if (kind === "agent_message_chunk") chunkPieces(update);
     else if (kind === "agent_thought_chunk") chunkPieces(update);
     else if (kind === "user_message_chunk") {
       if (!ui.echo) {
         const text = (update.content && update.content.text) || "";
-        if (text) userBubble(text);
+        appendUser(text);
       }
     } else if (kind === "tool_call" || kind === "tool_call_update") upsertTool(update);
     else if (kind === "plan") renderPlan(update);
@@ -555,6 +607,7 @@
   }
 
   function userBubble(text) {
+    closeUser();
     closeStream();
     const wrap = document.createElement("div");
     wrap.className = "msg user";
@@ -793,8 +846,22 @@
     showModal(box);
   }
 
+  function frameSessionId(params) {
+    if (!params || typeof params !== "object") return "";
+    return params.sessionId || params.session_id
+      || (params.params && (params.params.sessionId || params.params.session_id))
+      || "";
+  }
+
+  function forThisSession(params) {
+    const sid = frameSessionId(params);
+    if (!ui.sessionId) return false;
+    return !sid || sid === ui.sessionId;
+  }
+
   function onRequest(msg) {
     const { method, params } = unwrap(msg);
+    if (!forThisSession(params)) return;
     if (method === "session/request_permission") permissionModal(msg.id, params);
     else if (method === "x.ai/ask_user_question") questionModal(msg.id, params);
     else if (method === "x.ai/exit_plan_mode") planModal(msg.id, params);
@@ -806,6 +873,7 @@
 
   function onNote(msg) {
     const { method, params } = unwrap(msg);
+    if (!forThisSession(params)) return;
     if (method === "session/update" && params.update) onSessionUpdate(params.update);
     else if (method === "x.ai/session_notification" && params.update && params.update.sessionUpdate) {
       const kind = params.update.sessionUpdate;
@@ -851,6 +919,7 @@
   function clearTranscript() {
     ui.tools.clear();
     ui.stream = null;
+    ui.userStream = null;
     ui.thought = null;
     logEl.replaceChildren();
     const hint = document.createElement("div");
@@ -860,24 +929,164 @@
     logEl.appendChild(hint);
   }
 
-  async function openSession(reload) {
-    if (reload && ui.sessionId) {
-      ui.replaying = true;
-      try {
-        await rpc("session/load", { sessionId: ui.sessionId, cwd: ui.cwd, mcpServers: [] });
-      } catch {
-        ui.sessionId = "";
-      }
-      ui.replaying = false;
+  function setPicker(on) {
+    document.getElementById("picker").hidden = !on;
+    logEl.hidden = on;
+    document.querySelector("footer.composer").hidden = on;
+    if (on) document.getElementById("wire").hidden = true;
+  }
+
+  function sessionTitle(row) {
+    const raw = String(row.title || row.summary || row.firstPrompt || row.first_prompt || "").trim();
+    const line = raw.split("\n")[0].trim();
+    return line.length > 120 ? line.slice(0, 117) + "…" : line;
+  }
+
+  function normalizeSession(row) {
+    if (!row) return null;
+    const id = row.sessionId || row.session_id || "";
+    if (!id) return null;
+    const title = sessionTitle(row);
+    const messages = Number(row.numMessages || row.num_messages || 0);
+    if (!title && messages === 0) return null;
+    return {
+      id,
+      title: title || "Untitled",
+      detail: String(row.lastTurnSummary || row.last_turn_summary || "").trim(),
+      updated: row.lastActiveAt || row.last_active_at || row.updatedAt || row.updated_at || "",
+    };
+  }
+
+  // Ext methods arrive as `{ result, error }`. JSON-RPC has already been unwrapped by `rpc`.
+  function listPayload(value) {
+    if (!value || typeof value !== "object") return value;
+    if (value.error && !value.result) {
+      const err = value.error;
+      throw new Error(typeof err === "string" ? err : (err.message || "session list failed"));
     }
-    if (!ui.sessionId) {
-      const created = await rpc("session/new", { cwd: ui.cwd, mcpServers: [] });
-      ui.sessionId = created.sessionId || created.session_id || "";
+    if (value.result && typeof value.result === "object") return value.result;
+    return value;
+  }
+
+  async function fetchSessionPage(cursor) {
+    const params = { cwd: ui.cwd, limit: 40, allowRelax: true };
+    if (cursor) params.cursor = cursor;
+    try {
+      return listPayload(await rpc("_x.ai/session/list", params));
+    } catch {
+      return await rpc("session/list", { cwd: ui.cwd, cursor: cursor || undefined });
     }
-    if (!ui.sessionId) throw new Error("session was not created");
+  }
+
+  async function loadSessionRows() {
+    const rows = [];
+    let cursor = "";
+    for (let page = 0; page < 4; page++) {
+      const result = await fetchSessionPage(cursor);
+      rows.push(...((result && result.sessions) || []));
+      cursor = (result && (result.nextCursor || result.next_cursor)) || "";
+      if (!cursor) break;
+    }
+    const seen = new Set();
+    const out = [];
+    for (const row of rows) {
+      const item = normalizeSession(row);
+      if (!item || seen.has(item.id)) continue;
+      seen.add(item.id);
+      out.push(item);
+    }
+    return out;
+  }
+
+  function rememberSession(id) {
+    ui.sessionId = id;
+    if (id) sessionStorage.setItem(SESSION_STORE, id);
+    else sessionStorage.removeItem(SESSION_STORE);
+  }
+
+  async function resumeSession(id) {
+    clearTranscript();
+    rememberSession(id);
+    setPicker(false);
+    ui.ready = false;
+    setStatus("Loading conversation", "busy");
+    promptEl.disabled = true;
+    sendBtn.disabled = true;
+    await rpc("session/load", { sessionId: id, cwd: ui.cwd, mcpServers: [] });
     ui.ready = true;
     setTurn(false);
     cwdEl.textContent = ui.cwd;
+  }
+
+  async function startNew() {
+    clearTranscript();
+    rememberSession("");
+    setPicker(false);
+    ui.ready = false;
+    setStatus("Starting session", "busy");
+    promptEl.disabled = true;
+    sendBtn.disabled = true;
+    const created = await rpc("session/new", { cwd: ui.cwd, mcpServers: [] });
+    const id = created.sessionId || created.session_id || "";
+    if (!id) throw new Error("session was not created");
+    rememberSession(id);
+    ui.ready = true;
+    setTurn(false);
+    cwdEl.textContent = ui.cwd;
+  }
+
+  async function openPicker() {
+    ui.ready = false;
+    promptEl.disabled = true;
+    sendBtn.disabled = true;
+    setPicker(true);
+    setStatus("Choose a conversation", "on");
+    const list = document.getElementById("picker-list");
+    const errorEl = document.getElementById("picker-error");
+    errorEl.textContent = "";
+    list.textContent = "Loading…";
+    document.getElementById("picker-back").hidden = !ui.sessionId;
+    let rows = [];
+    try {
+      rows = await loadSessionRows();
+    } catch (err) {
+      list.textContent = "";
+      errorEl.textContent = errText(err);
+      return;
+    }
+    list.replaceChildren();
+    if (!rows.length) {
+      const empty = document.createElement("p");
+      empty.className = "meta";
+      empty.textContent = "No conversations yet.";
+      list.appendChild(empty);
+      return;
+    }
+    for (const row of rows) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "session-row" + (row.id === ui.sessionId ? " current" : "");
+      const title = document.createElement("strong");
+      title.textContent = row.title;
+      btn.appendChild(title);
+      if (row.detail) {
+        const detail = document.createElement("small");
+        detail.textContent = row.detail;
+        btn.appendChild(detail);
+      }
+      const when = document.createElement("small");
+      const stamp = String(row.updated).replace("T", " ").replace(/\.\d+Z$/, " UTC").replace(/Z$/, " UTC");
+      when.textContent = stamp || row.id;
+      btn.appendChild(when);
+      btn.addEventListener("click", () => {
+        resumeSession(row.id).catch((err) => {
+          rememberSession("");
+          errorEl.textContent = errText(err);
+          openPicker();
+        });
+      });
+      list.appendChild(btn);
+    }
   }
 
   async function handshake(reload) {
@@ -887,8 +1096,29 @@
       clientInfo: { name: "grok-web", version: "1.0.0" },
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
     });
-    await openSession(reload);
     ui.backoff = 1000;
+    if (reload && ui.sessionId) {
+      await rpc("session/load", {
+        sessionId: ui.sessionId,
+        cwd: ui.cwd,
+        mcpServers: [],
+        _meta: { noReplay: true },
+      });
+      ui.ready = true;
+      setPicker(false);
+      setTurn(false);
+      return;
+    }
+    const stored = sessionStorage.getItem(SESSION_STORE) || "";
+    if (stored) {
+      try {
+        await resumeSession(stored);
+        return;
+      } catch {
+        rememberSession("");
+      }
+    }
+    await openPicker();
   }
 
   function connect(reload) {
@@ -991,16 +1221,32 @@
     closeModal();
   });
 
+  document.getElementById("sessions-btn").addEventListener("click", () => {
+    if (!ui.ws || ui.ws.readyState !== WebSocket.OPEN) return;
+    openPicker();
+  });
+
+  document.getElementById("picker-new").addEventListener("click", () => {
+    startNew().catch((err) => {
+      document.getElementById("picker-error").textContent = errText(err);
+      setStatus("Session failed", "bad");
+    });
+  });
+
+  document.getElementById("picker-back").addEventListener("click", () => {
+    if (!ui.sessionId) return;
+    setPicker(false);
+    ui.ready = true;
+    setTurn(ui.turn);
+  });
+
   document.getElementById("new-btn").addEventListener("click", async () => {
-    if (!ui.ready) return;
-    if (ui.turn) {
+    if (!ui.ws || ui.ws.readyState !== WebSocket.OPEN) return;
+    if (ui.turn && ui.sessionId) {
       try { notify("session/cancel", { sessionId: ui.sessionId }); } catch { /* ignore */ }
     }
-    ui.sessionId = "";
-    clearTranscript();
-    setStatus("Starting session", "busy");
     try {
-      await openSession(false);
+      await startNew();
     } catch (err) {
       systemLine(errText(err));
       setStatus("Session failed", "bad");

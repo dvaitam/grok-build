@@ -4,7 +4,8 @@
 //!
 //! The agent persists across WebSocket reconnections: a single MvpAgent instance is created on first connection and reused for all later ones.
 //! Session actors (and any in-flight prompts) therefore survive client disconnects.
-//! When a client reconnects and loads an existing session, ongoing work continues to stream to the new connection.
+//! Each socket receives notifications only for the session it loaded, resumed, or created, so one browser tab cannot see another conversation.
+//! Loading a session that another socket still holds moves that stream to the socket that just loaded it.
 
 use std::cell::RefCell;
 use std::net::SocketAddr;
@@ -43,10 +44,15 @@ use crate::agent::remote_config::{ModelFetchAuth, prefetch_models_blocking};
 
 use indexmap::IndexMap;
 
-/// Swappable destination for the relay task.
-/// Points at the current ACP connection's gateway sender.
-/// When no client is connected, the value is `None` and outbound messages are silently dropped.
-type RelayDest = Rc<RefCell<Option<mpsc::UnboundedSender<AcpClientMessage>>>>;
+/// One browser or TUI socket, bound to at most one session.
+struct RelayConn {
+    id: u64,
+    tx: mpsc::UnboundedSender<AcpClientMessage>,
+    session_id: RefCell<Option<String>>,
+}
+
+/// Live sockets. The relay delivers each notification to the socket bound to that session.
+type RelayTable = Rc<RefCell<Vec<RelayConn>>>;
 
 const MAX_BUFFER_SIZE: usize = 8 * 1024 * 1024;
 const KEEPALIVE_INTERVAL_SECS: u64 = 15;
@@ -334,7 +340,7 @@ fn persistent_agent_thread(
 
 /// Handle an authenticated WebSocket connection.
 /// On first connection, spawns a persistent agent thread that owns the MvpAgent.
-/// On subsequent connections (reconnects), sends new WS channels to the existing agent thread so session actors keep streaming to the new client.
+/// On subsequent connections, the existing agent thread accepts the new socket. Notifications still go only to the socket bound to that session.
 async fn handle_connection(ws: WebSocket, state: Arc<ServerState>, peer_addr: SocketAddr) {
     info!("New WebSocket connection from {}", peer_addr);
 
@@ -449,9 +455,177 @@ async fn handle_connection(ws: WebSocket, state: Arc<ServerState>, peer_addr: So
     info!("WebSocket connection ended for {}", peer_addr);
 }
 
+/// What an inbound ACP line does to this socket's session binding.
+#[derive(Debug, PartialEq, Eq)]
+enum InboundBind {
+    /// `session/new`: stop delivering the previous conversation. `rpc_id` matches the create response.
+    Clear { rpc_id: Option<String> },
+    /// This socket becomes the only recipient for `session_id`.
+    Exclusive(String),
+}
+
+fn json_rpc_id(value: &serde_json::Value) -> Option<String> {
+    match value.get("id")? {
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::String(s) if !s.is_empty() => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// `sessionId` on this object, or one level down under `params` for a wrapped ext call.
+fn json_session_id(value: &serde_json::Value) -> Option<String> {
+    let direct = value
+        .get("sessionId")
+        .or_else(|| value.get("session_id"))
+        .and_then(|id| id.as_str())
+        .filter(|id| !id.is_empty());
+    if let Some(id) = direct {
+        return Some(id.to_string());
+    }
+    value.get("params").and_then(|params| {
+        params
+            .get("sessionId")
+            .or_else(|| params.get("session_id"))
+            .and_then(|id| id.as_str())
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn inbound_bind(line: &str) -> Option<InboundBind> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let method = value.get("method").and_then(|method| method.as_str())?;
+    let session_id = value.get("params").and_then(json_session_id);
+    match method {
+        "session/new" => Some(InboundBind::Clear {
+            rpc_id: json_rpc_id(&value),
+        }),
+        "session/load" | "session/resume" | "session/prompt" => {
+            session_id.map(InboundBind::Exclusive)
+        }
+        _ => None,
+    }
+}
+
+/// `(rpc id, session id)` when this line is the response that names a session just created.
+fn outbound_created_session(line: &str) -> Option<(String, String)> {
+    let value: serde_json::Value = serde_json::from_str(line).ok()?;
+    let id = json_rpc_id(&value)?;
+    let result = value.get("result")?;
+    if result.get("sessions").is_some() {
+        return None;
+    }
+    Some((id, json_session_id(result)?))
+}
+
+fn session_id_str(id: &acp::SessionId) -> String {
+    id.0.to_string()
+}
+
+fn raw_session_id(raw: &serde_json::value::RawValue) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(raw.get()).ok()?;
+    json_session_id(&value)
+}
+
+fn client_message_session_id(msg: &AcpClientMessage) -> Option<String> {
+    Some(match msg {
+        AcpClientMessage::RequestPermission(args) => session_id_str(&args.request.session_id),
+        AcpClientMessage::ReadTextFile(args) => session_id_str(&args.request.session_id),
+        AcpClientMessage::WriteTextFile(args) => session_id_str(&args.request.session_id),
+        AcpClientMessage::SessionNotification(args) => session_id_str(&args.request.session_id),
+        AcpClientMessage::CreateTerminal(args) => session_id_str(&args.request.session_id),
+        AcpClientMessage::TerminalOutput(args) => session_id_str(&args.request.session_id),
+        AcpClientMessage::ReleaseTerminal(args) => session_id_str(&args.request.session_id),
+        AcpClientMessage::WaitForTerminalExit(args) => session_id_str(&args.request.session_id),
+        AcpClientMessage::KillTerminalCommand(args) => session_id_str(&args.request.session_id),
+        AcpClientMessage::ExtMethod(args) => return raw_session_id(args.request.params.as_ref()),
+        AcpClientMessage::ExtNotification(args) => {
+            return raw_session_id(args.request.params.as_ref());
+        }
+    })
+}
+
+fn bind_exclusive(relay: &RelayTable, conn_id: u64, session_id: &str) {
+    let relay = relay.borrow();
+    for conn in relay.iter() {
+        let mut slot = conn.session_id.borrow_mut();
+        if conn.id == conn_id {
+            *slot = Some(session_id.to_string());
+        } else if slot.as_deref() == Some(session_id) {
+            *slot = None;
+        }
+    }
+}
+
+fn clear_binding(relay: &RelayTable, conn_id: u64) {
+    let relay = relay.borrow();
+    for conn in relay.iter() {
+        if conn.id == conn_id {
+            *conn.session_id.borrow_mut() = None;
+        }
+    }
+}
+
+fn remove_relay_conn(relay: &RelayTable, conn_id: u64) {
+    relay.borrow_mut().retain(|conn| conn.id != conn_id);
+}
+
+fn apply_inbound_bind(
+    relay: &RelayTable,
+    conn_id: u64,
+    pending_new: &RefCell<Option<String>>,
+    line: &str,
+) {
+    match inbound_bind(line) {
+        Some(InboundBind::Clear { rpc_id }) => {
+            *pending_new.borrow_mut() = rpc_id;
+            clear_binding(relay, conn_id);
+        }
+        Some(InboundBind::Exclusive(session_id)) => {
+            *pending_new.borrow_mut() = None;
+            bind_exclusive(relay, conn_id, &session_id);
+        }
+        None => {}
+    }
+}
+
+fn apply_outbound_bind(
+    relay: &RelayTable,
+    conn_id: u64,
+    pending_new: &RefCell<Option<String>>,
+    line: &str,
+) {
+    let Some((rpc_id, session_id)) = outbound_created_session(line) else {
+        return;
+    };
+    let matches = pending_new.borrow().as_deref() == Some(rpc_id.as_str());
+    if !matches {
+        return;
+    }
+    *pending_new.borrow_mut() = None;
+    bind_exclusive(relay, conn_id, &session_id);
+}
+
+fn route_client_message(relay: &RelayTable, msg: AcpClientMessage) {
+    let Some(session_id) = client_message_session_id(&msg) else {
+        return;
+    };
+    let tx = {
+        let relay = relay.borrow();
+        relay.iter().find_map(|conn| {
+            (conn.session_id.borrow().as_deref() == Some(session_id.as_str()))
+                .then(|| conn.tx.clone())
+        })
+    };
+    if let Some(tx) = tx {
+        let _ = tx.send(msg);
+    }
+    relay.borrow_mut().retain(|conn| !conn.tx.is_closed());
+}
+
 /// Run the persistent agent on a dedicated thread with LocalSet. The MvpAgent is created **once** and reused across WebSocket reconnections.
 /// Session actors hold cloned `GatewaySender` handles onto a persistent gateway channel, so they can always send notifications.
-/// A relay task forwards those messages to the *current* ACP connection's channel, so they reach whichever client is connected.
+/// A relay task forwards each message to the socket bound to that message's session, and drops it when no socket is bound.
 async fn run_persistent_agent(
     mut agent_config: AgentConfig,
     mut connection_rx: mpsc::UnboundedReceiver<NewConnectionChannels>,
@@ -496,23 +670,25 @@ async fn run_persistent_agent(
     *keepalive = Some(Rc::clone(&agent));
     agent.models_manager.spawn_background_refresh();
 
-    let relay_dest: RelayDest = Rc::new(RefCell::new(None));
+    let relay: RelayTable = Rc::new(RefCell::new(Vec::new()));
+    let next_conn_id = Rc::new(RefCell::new(1u64));
 
-    let relay_dest_for_task = relay_dest.clone();
+    let relay_for_task = relay.clone();
     tokio::task::spawn_local(async move {
         while let Some(msg) = gw_rx.recv().await {
-            let maybe_tx = relay_dest_for_task.borrow().clone();
-            if let Some(tx) = maybe_tx
-                && tx.send(msg).is_err()
-            {
-                *relay_dest_for_task.borrow_mut() = None;
-            }
+            route_client_message(&relay_for_task, msg);
         }
     });
 
     while let Some(channels) = connection_rx.recv().await {
         info!("Agent thread: setting up new ACP connection (reconnect)");
-        setup_acp_connection(agent.clone(), channels, relay_dest.clone());
+        let id = {
+            let mut next = next_conn_id.borrow_mut();
+            let id = *next;
+            *next = next.wrapping_add(1).max(1);
+            id
+        };
+        setup_acp_connection(agent.clone(), channels, relay.clone(), id);
     }
 
     info!("Agent thread: connection channel closed, exiting");
@@ -520,11 +696,13 @@ async fn run_persistent_agent(
 }
 
 /// Set up a new ACP connection for a WebSocket connection, reusing the existing MvpAgent.
-/// The relay destination is updated so that session actor notifications flow to the new client.
+/// The socket starts unbound. `session/load`, `session/resume`, and `session/prompt` bind it to that session.
+/// `session/new` unbinds it until the create response names the new id.
 fn setup_acp_connection(
     agent: Rc<MvpAgent>,
     channels: NewConnectionChannels,
-    relay_dest: RelayDest,
+    relay: RelayTable,
+    conn_id: u64,
 ) {
     let NewConnectionChannels {
         mut from_ws_rx,
@@ -539,7 +717,12 @@ fn setup_acp_connection(
 
     let (conn_gw_tx, conn_gw_rx) = tokio::sync::mpsc::unbounded_channel::<AcpClientMessage>();
 
-    *relay_dest.borrow_mut() = Some(conn_gw_tx);
+    relay.borrow_mut().push(RelayConn {
+        id: conn_id,
+        tx: conn_gw_tx,
+        session_id: RefCell::new(None),
+    });
+    let pending_new: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
 
     // `Agent` is implemented for `Rc<T: Agent>` so this works.
     let incoming = LineBufferedRead::spawn_local(incoming);
@@ -552,6 +735,8 @@ fn setup_acp_connection(
             .run(),
     );
 
+    let relay_in = relay.clone();
+    let pending_in = pending_new.clone();
     tokio::task::spawn_local(async move {
         while let Some(msg) = from_ws_rx.recv().await {
             // Log messages that lack both `id` and `method`
@@ -565,6 +750,8 @@ fn setup_acp_connection(
                     "incoming WS message has neither id nor method"
                 );
             }
+            // Bind before the agent sees `session/load`, so the history replay reaches this socket.
+            apply_inbound_bind(&relay_in, conn_id, &pending_in, &msg);
             if agent_read_tx.write_all(msg.as_bytes()).await.is_err() {
                 break;
             }
@@ -572,11 +759,14 @@ fn setup_acp_connection(
                 break;
             }
         }
-        // WS disconnected: the simplex writer is dropped, causing `handle_io` to complete
-        // The GatewayReceiver for this connection will also stop
-        // But the MvpAgent and session actors stay alive, ready for the next connection
+        // WS disconnected: the simplex writer is dropped, causing `handle_io` to complete.
+        // Dropping this socket's relay sender stops its gateway receiver.
+        // The MvpAgent and session actors stay alive for the next connection.
+        remove_relay_conn(&relay_in, conn_id);
     });
 
+    let relay_out = relay.clone();
+    let pending_out = pending_new;
     tokio::task::spawn_local(async move {
         let mut reader = BufReader::new(agent_write_rx);
         let mut line = String::new();
@@ -587,13 +777,19 @@ fn setup_acp_connection(
                 Ok(0) => break,
                 Ok(_) => {
                     let msg = line.trim_end_matches(['\r', '\n']);
-                    if !msg.is_empty() && to_ws_tx.send(msg.to_string()).is_err() {
+                    if msg.is_empty() {
+                        continue;
+                    }
+                    // Bind the created id before the browser can send `session/prompt`.
+                    apply_outbound_bind(&relay_out, conn_id, &pending_out, msg);
+                    if to_ws_tx.send(msg.to_string()).is_err() {
                         break;
                     }
                 }
                 Err(_) => break,
             }
         }
+        remove_relay_conn(&relay_out, conn_id);
     });
 
     // Run the ACP IO handler fire-and-forget so the connection loop is not blocked
@@ -605,6 +801,7 @@ fn setup_acp_connection(
 }
 
 const WEB_UI_HTML: &str = include_str!("web_ui.html");
+const FAVICON_SVG: &str = include_str!("favicon.svg");
 
 /// Browser URLs for this bind address.
 /// An unspecified address (`0.0.0.0` or `::`) is advertised as loopback plus `lan_hosts`, so another machine on the LAN can open the page.
@@ -654,8 +851,14 @@ async fn web_index() -> impl IntoResponse {
     ([(header::CACHE_CONTROL, "no-cache")], Html(WEB_UI_HTML))
 }
 
-async fn favicon() -> StatusCode {
-    StatusCode::NO_CONTENT
+async fn favicon() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "image/svg+xml; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        FAVICON_SVG,
+    )
 }
 
 async fn api_info(
@@ -698,6 +901,7 @@ fn agent_router(state: Arc<ServerState>) -> Router {
     Router::new()
         .route("/", get(web_index))
         .route("/favicon.ico", get(favicon))
+        .route("/favicon.svg", get(favicon))
         .route("/api/info", get(api_info))
         .route("/ws", get(ws_handler))
         .with_state(state)
@@ -706,6 +910,7 @@ fn agent_router(state: Arc<ServerState>) -> Router {
 /// Run the agent WebSocket server.
 /// This starts a WebSocket server that accepts authenticated connections from remote TUI clients and from the browser UI at `/`.
 /// A single agent instance is shared across all connections (persisted across reconnections) so in-flight session work survives client disconnects.
+/// Each connection is bound to one session at a time, and only that session's updates are written to its socket.
 pub async fn run_agent_server(
     config: ServerConfig,
     agent_config: AgentConfig,

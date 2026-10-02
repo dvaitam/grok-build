@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use agent_client_protocol as acp;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
@@ -227,6 +228,34 @@ async fn web_ui_serves_page_and_gates_info() {
         html.contains("[hidden] { display: none !important; }"),
         "author display rules must not keep #gate or #app visible when hidden"
     );
+    assert!(html.contains("rel=\"icon\""));
+    assert!(html.contains("/favicon.svg"));
+
+    let icon = client
+        .get(format!("http://{addr}/favicon.svg"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(icon.status(), reqwest::StatusCode::OK);
+    let icon_type = icon
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        icon_type.starts_with("image/svg+xml"),
+        "favicon content type was {icon_type}"
+    );
+    let icon_body = icon.text().await.unwrap();
+    assert!(icon_body.contains("<svg"));
+    assert!(icon_body.contains("#e8f27a"));
+
+    let ico = client
+        .get(format!("http://{addr}/favicon.ico"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ico.status(), reqwest::StatusCode::OK);
 
     let denied = client
         .get(format!("http://{addr}/api/info"))
@@ -251,4 +280,189 @@ async fn web_ui_serves_page_and_gates_info() {
     let body: serde_json::Value = serde_json::from_str(&ok.text().await.unwrap()).unwrap();
     let cwd = body.get("cwd").and_then(|value| value.as_str()).unwrap();
     assert!(std::path::Path::new(cwd).is_absolute());
+}
+
+fn notification(session_id: &str) -> xai_acp_lib::AcpClientMessage {
+    let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
+    xai_acp_lib::AcpClientMessage::SessionNotification(xai_acp_lib::AcpArgs {
+        request: acp::SessionNotification::new(
+            session_id.to_owned(),
+            acp::SessionUpdate::AgentMessageChunk(acp::ContentChunk::new("hi".into())),
+        ),
+        response_tx,
+    })
+}
+
+fn bound_session(relay: &super::RelayTable, conn_id: u64) -> Option<String> {
+    relay.borrow().iter().find_map(|conn| {
+        (conn.id == conn_id)
+            .then(|| conn.session_id.borrow().clone())
+            .flatten()
+    })
+}
+
+#[test]
+fn inbound_bind_selects_one_session_and_new_clears_it() {
+    assert_eq!(
+        super::inbound_bind(
+            r#"{"jsonrpc":"2.0","id":4,"method":"session/load","params":{"sessionId":"sess-a","cwd":"/tmp","mcpServers":[]}}"#
+        ),
+        Some(super::InboundBind::Exclusive("sess-a".into()))
+    );
+    assert_eq!(
+        super::inbound_bind(
+            r#"{"jsonrpc":"2.0","id":9,"method":"session/prompt","params":{"session_id":"sess-b"}}"#
+        ),
+        Some(super::InboundBind::Exclusive("sess-b".into()))
+    );
+    assert_eq!(
+        super::inbound_bind(
+            r#"{"jsonrpc":"2.0","id":5,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}"#
+        ),
+        Some(super::InboundBind::Clear {
+            rpc_id: Some("5".into())
+        })
+    );
+    assert_eq!(
+        super::inbound_bind(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#),
+        None
+    );
+}
+
+#[test]
+fn outbound_created_session_ignores_a_list_payload() {
+    assert_eq!(
+        super::outbound_created_session(
+            r#"{"jsonrpc":"2.0","id":5,"result":{"sessionId":"sess-new"}}"#
+        ),
+        Some(("5".into(), "sess-new".into()))
+    );
+    assert_eq!(
+        super::outbound_created_session(
+            r#"{"jsonrpc":"2.0","id":2,"result":{"sessions":[],"sessionId":"nope"}}"#
+        ),
+        None
+    );
+}
+
+#[test]
+fn route_delivers_each_session_only_to_its_socket() {
+    let (tx_a, mut rx_a) = mpsc::unbounded_channel();
+    let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+    let relay = std::rc::Rc::new(std::cell::RefCell::new(vec![
+        super::RelayConn {
+            id: 1,
+            tx: tx_a,
+            session_id: std::cell::RefCell::new(None),
+        },
+        super::RelayConn {
+            id: 2,
+            tx: tx_b,
+            session_id: std::cell::RefCell::new(None),
+        },
+    ]));
+    let pending_a = std::cell::RefCell::new(None);
+    let pending_b = std::cell::RefCell::new(None);
+    super::apply_inbound_bind(
+        &relay,
+        1,
+        &pending_a,
+        r#"{"id":1,"method":"session/load","params":{"sessionId":"sess-a"}}"#,
+    );
+    super::apply_inbound_bind(
+        &relay,
+        2,
+        &pending_b,
+        r#"{"id":1,"method":"session/prompt","params":{"sessionId":"sess-b"}}"#,
+    );
+
+    super::route_client_message(&relay, notification("sess-a"));
+    super::route_client_message(&relay, notification("sess-b"));
+    super::route_client_message(&relay, notification("sess-c"));
+
+    let got_a = rx_a.try_recv().expect("socket A gets its session");
+    assert_eq!(
+        super::client_message_session_id(&got_a).as_deref(),
+        Some("sess-a")
+    );
+    assert!(
+        rx_a.try_recv().is_err(),
+        "socket A must not see other sessions"
+    );
+    let got_b = rx_b.try_recv().expect("socket B gets its session");
+    assert_eq!(
+        super::client_message_session_id(&got_b).as_deref(),
+        Some("sess-b")
+    );
+    assert!(
+        rx_b.try_recv().is_err(),
+        "socket B must not see other sessions"
+    );
+}
+
+#[test]
+fn resume_moves_the_stream_off_the_previous_socket() {
+    let (tx_a, mut rx_a) = mpsc::unbounded_channel();
+    let (tx_b, mut rx_b) = mpsc::unbounded_channel();
+    let relay = std::rc::Rc::new(std::cell::RefCell::new(vec![
+        super::RelayConn {
+            id: 1,
+            tx: tx_a,
+            session_id: std::cell::RefCell::new(Some("sess-a".into())),
+        },
+        super::RelayConn {
+            id: 2,
+            tx: tx_b,
+            session_id: std::cell::RefCell::new(None),
+        },
+    ]));
+    let pending = std::cell::RefCell::new(Some("9".into()));
+    super::apply_inbound_bind(
+        &relay,
+        2,
+        &pending,
+        r#"{"id":3,"method":"session/load","params":{"sessionId":"sess-a"}}"#,
+    );
+    assert_eq!(bound_session(&relay, 1), None);
+    assert_eq!(bound_session(&relay, 2).as_deref(), Some("sess-a"));
+
+    super::route_client_message(&relay, notification("sess-a"));
+    assert!(rx_a.try_recv().is_err());
+    assert!(rx_b.try_recv().is_ok());
+}
+
+#[test]
+fn new_session_binds_only_after_its_create_response() {
+    let (tx, rx) = mpsc::unbounded_channel();
+    let relay = std::rc::Rc::new(std::cell::RefCell::new(vec![super::RelayConn {
+        id: 1,
+        tx,
+        session_id: std::cell::RefCell::new(None),
+    }]));
+    let pending = std::cell::RefCell::new(None);
+    super::apply_inbound_bind(
+        &relay,
+        1,
+        &pending,
+        r#"{"id":7,"method":"session/load","params":{"sessionId":"old"}}"#,
+    );
+    super::apply_inbound_bind(
+        &relay,
+        1,
+        &pending,
+        r#"{"id":8,"method":"session/new","params":{"cwd":"/tmp","mcpServers":[]}}"#,
+    );
+    assert_eq!(bound_session(&relay, 1), None);
+    super::route_client_message(&relay, notification("brand-new"));
+    assert!(rx.try_recv().is_err(), "the socket is unbound until the create response");
+    super::apply_outbound_bind(
+        &relay,
+        1,
+        &pending,
+        r#"{"id":8,"result":{"sessionId":"brand-new"}}"#,
+    );
+    assert_eq!(bound_session(&relay, 1).as_deref(), Some("brand-new"));
+    // A list response must not steal the binding.
+    super::apply_outbound_bind(&relay, 1, &pending, r#"{"id":2,"result":{"sessions":[]}}"#);
+    assert_eq!(bound_session(&relay, 1).as_deref(), Some("brand-new"));
 }
