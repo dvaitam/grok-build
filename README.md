@@ -10,14 +10,15 @@
   Grok Build (<code>grok</code>)
 </h1>
 
-**Grok Build** is SpaceXAI's terminal-based AI coding agent. It runs as a
-full-screen TUI that understands your codebase, edits files, executes shell
-commands, searches the web, and manages long-running tasks — interactively,
+**Grok Build** is SpaceXAI's AI coding agent. It understands your codebase,
+edits files, executes shell commands, searches the web, and manages
+long-running tasks. It runs as a full-screen TUI, as a browser UI on the LAN,
 headlessly for scripting/CI, or embedded in editors via the Agent Client
 Protocol (ACP).
 
 [Installing the released binary](#installing-the-released-binary) ·
 [Building from source](#building-from-source) ·
+[Web UI](#web-ui) ·
 [Documentation](#documentation) ·
 [Repository layout](#repository-layout) ·
 [Development](#development) ·
@@ -28,8 +29,8 @@ Protocol (ACP).
 
 **Learn more about Grok Build at [x.ai/cli](https://x.ai/cli)**
 
-This repository contains the Rust source for the `grok` CLI/TUI and its agent
-runtime. It is synced periodically from the SpaceXAI monorepo.
+This repository contains the Rust source for the `grok` CLI, TUI, browser UI,
+and agent runtime. It is synced periodically from the SpaceXAI monorepo.
 
 A small `SOURCE_REV` file at the root records the full monorepo commit SHA
 for the version of the code present in this tree.
@@ -82,6 +83,46 @@ The binary artifact is named `xai-grok-pager`; official installs ship it as
 `grok`. On first launch it opens your browser to authenticate — see the
 [authentication guide](crates/codegen/xai-grok-pager/docs/user-guide/02-authentication.md).
 
+## Web UI
+
+`grok agent web` serves a browser page for the agent in the current directory
+and streams the session over a WebSocket. It listens on `0.0.0.0:2419` by
+default, so a browser on this machine or another machine on the LAN can open
+it. `grok agent serve` is the same server with a loopback default
+(`127.0.0.1:2419`), for ACP clients as well as the page.
+
+```sh
+grok agent web
+grok agent web --bind 127.0.0.1:2419
+grok agent web --secret "$GROK_AGENT_SECRET"   # otherwise a key is generated and printed
+```
+
+A source build uses the pager binary directly:
+
+```sh
+cargo run -p xai-grok-pager-bin -- agent web
+```
+
+Startup prints URLs of the form `http://<host>:2419/?server-key=<secret>`.
+Opening the page without a key shows a connect form. That secret also
+authenticates `GET /api/info` and the WebSocket at `/ws`, either as the
+`server-key` query parameter or as `Authorization: Bearer <secret>`. The page
+serves its icon at `/favicon.svg` and `/favicon.ico`.
+
+The page lists conversations for this working directory. Resume one, or start
+a new one. The tab remembers that choice, so a reload returns to the same
+conversation. Each socket receives updates only for the conversation it
+loaded, resumed, or created. Opening a conversation that another socket still
+holds moves that stream to the socket that just opened it. The agent process
+stays up across disconnects, so work already running continues and appears
+again when that conversation is loaded.
+
+The transcript shows messages, thoughts, tool calls, and plans. The page
+answers permission prompts, questions, and plan approval, and it can cancel
+the current turn. A wire panel shows the raw protocol frames.
+
+The page is served over plain HTTP. Use a network you trust.
+
 ## Documentation
 
 Full online documentation is available at
@@ -98,7 +139,7 @@ MCP servers, skills, plugins, hooks, headless mode, sandboxing, and more.
 |------|----------|
 | `crates/codegen/xai-grok-pager-bin` | Composition-root package; builds the `xai-grok-pager` binary |
 | `crates/codegen/xai-grok-pager` | The TUI: scrollback, prompt, modals, rendering |
-| `crates/codegen/xai-grok-shell` | Agent runtime + leader/stdio/headless entry points |
+| `crates/codegen/xai-grok-shell` | Agent runtime, leader/stdio/headless entry points, and the browser UI |
 | `crates/codegen/xai-grok-tools` | Tool implementations (terminal, file edit, search, ...) |
 | `crates/codegen/xai-grok-workspace` | Host filesystem, VCS, execution, checkpoints |
 | `crates/codegen/...` | The rest of the CLI crate closure (config, MCP, markdown, sandbox, ...) |
