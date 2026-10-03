@@ -52,6 +52,16 @@ pub struct BillingPeriodUsage {
     pub total_used: Option<Cent>,
 }
 
+/// One product's share of the current usage period (`GrokBuild`, `GrokChat`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductUsage {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_percent: Option<f64>,
+}
+
 /// Current billing configuration for Grok Build coding credits. Carries the newer credits-config fields (`credit_usage_percent`, `current_period`).
 /// It also carries the deprecated `GrokBuildBillingConfig` fields (`monthly_limit`, `used`, `billing_period_*`). Consumers should prefer the new fields and fall back to the deprecated ones.
 /// The same struct then works against both the new `GetGrokCreditsConfig` and the legacy `GetGrokBuildBillingConfig` responses.
@@ -66,6 +76,9 @@ pub struct BillingConfig {
     /// Prefer it over `billing_period_start`/`billing_period_end`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_period: Option<UsagePeriod>,
+    /// Per-product share of this period. Empty when the credits API omits `productUsage`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub product_usage: Vec<ProductUsage>,
     /// Deprecated: included monthly credit budget. Use `credit_usage_percent`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub monthly_limit: Option<Cent>,
@@ -399,6 +412,7 @@ mod tests {
                 is_unified_billing_user: Some(true),
                 billing_period_start: None,
                 billing_period_end: None,
+                product_usage: vec![],
                 history: vec![
                     BillingPeriodUsage {
                         billing_cycle: Some(BillingCycle {
@@ -476,6 +490,7 @@ mod tests {
             is_unified_billing_user: None,
             billing_period_start: Some("2025-04-01T00:00:00Z".to_string()),
             billing_period_end: Some("2025-05-01T00:00:00Z".to_string()),
+            product_usage: vec![],
             history: vec![BillingPeriodUsage {
                 billing_cycle: Some(BillingCycle {
                     year: 2025,
@@ -534,6 +549,7 @@ mod tests {
             is_unified_billing_user: None,
             billing_period_start: None,
             billing_period_end: None,
+            product_usage: vec![],
             history: vec![],
         };
         let json = serde_json::to_value(&config).unwrap();
@@ -596,7 +612,12 @@ mod tests {
         assert_eq!(config.on_demand_used.unwrap().val, 300);
         assert_eq!(config.prepaid_balance.unwrap().val, 1250);
         assert_eq!(config.is_unified_billing_user, Some(true));
-        // The CLI billing code does not read `productUsage` yet
+        assert_eq!(config.product_usage.len(), 1);
+        assert_eq!(
+            config.product_usage[0].product.as_deref(),
+            Some("PRODUCT_GROK_BUILD")
+        );
+        assert_eq!(config.product_usage[0].usage_percent, Some(61.2));
         assert_eq!(config.history.len(), 1);
         let Some(history) = config.history.first() else {
             panic!("expected one history period");

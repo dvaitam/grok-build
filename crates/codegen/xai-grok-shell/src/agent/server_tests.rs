@@ -224,6 +224,19 @@ async fn web_ui_serves_page_and_gates_info() {
     assert!(html.contains("/ws?server-key="));
     assert!(html.contains("session/prompt"));
     assert!(html.contains("session/update"));
+    assert!(!html.contains("details.open = true"));
+    assert!(html.contains("previewWords"));
+    assert!(html.contains("id=\"attach\""));
+    assert!(html.contains("Attach image"));
+    assert!(html.contains("id=\"usage\""));
+    assert!(
+        html.contains("_x.ai/billing"),
+        "the header reads weekly usage from the billing extension"
+    );
+    assert!(
+        html.contains("type: \"image\""),
+        "the composer must send ACP image content blocks"
+    );
     assert!(
         html.contains("[hidden] { display: none !important; }"),
         "author display rules must not keep #gate or #app visible when hidden"
@@ -248,7 +261,7 @@ async fn web_ui_serves_page_and_gates_info() {
     );
     let icon_body = icon.text().await.unwrap();
     assert!(icon_body.contains("<svg"));
-    assert!(icon_body.contains("#e8f27a"));
+    assert!(icon_body.contains("#1d1d1f"));
 
     let ico = client
         .get(format!("http://{addr}/favicon.ico"))

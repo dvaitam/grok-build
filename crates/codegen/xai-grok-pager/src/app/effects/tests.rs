@@ -353,6 +353,7 @@ fn empty_billing_config() -> BillingConfig {
         is_unified_billing_user: None,
         billing_period_start: None,
         billing_period_end: None,
+        product_usage: vec![],
         history: vec![],
     }
 }

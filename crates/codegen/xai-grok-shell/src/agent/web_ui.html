@@ -5,22 +5,30 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Grok</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#f5f5f7">
 <style>
   :root {
-    color-scheme: dark;
-    --bg: #101114;
-    --bg-raised: #181a1f;
-    --bg-user: #23262e;
-    --line: #2c3038;
-    --text: #eceae6;
-    --muted: #9b978f;
-    --accent: #e8f27a;
-    --accent-ink: #1a1c12;
-    --danger: #ff8d7a;
-    --ok: #8fd9a5;
-    --warn: #e6c07b;
-    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-    --sans: "Segoe UI", system-ui, sans-serif;
+    color-scheme: light;
+    --bg: #f5f5f7;
+    --bg-raised: #ffffff;
+    --bg-user: #ffffff;
+    --line: rgba(0, 0, 0, 0.08);
+    --hairline: #d2d2d7;
+    --text: #1d1d1f;
+    --muted: #6e6e73;
+    --faint: #86868b;
+    --accent: #0071e3;
+    --accent-hover: #0076df;
+    --accent-active: #006edb;
+    --link: #0066cc;
+    --accent-ink: #ffffff;
+    --danger: #ff3b30;
+    --ok: #008009;
+    --warn: #bf4800;
+    --nav: rgba(250, 250, 252, 0.8);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: "SF Pro Text", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --display: "SF Pro Display", "SF Pro Icons", "Helvetica Neue", Helvetica, Arial, sans-serif;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -28,12 +36,22 @@
     font-family: var(--sans);
     background: var(--bg);
     color: var(--text);
-    font-size: 15px;
-    line-height: 1.45;
+    font-size: 17px;
+    line-height: 1.47059;
+    letter-spacing: -0.022em;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   button, input, textarea { font: inherit; color: inherit; }
   button { cursor: pointer; }
-  a { color: var(--accent); }
+  button:disabled { cursor: default; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ::selection { background: rgba(0, 113, 227, 0.18); }
+  button:focus-visible, input:focus-visible, textarea:focus-visible, .session-row:focus-visible, .chip button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+  }
   /* ID rules below set display, which would otherwise beat the UA [hidden] style. */
   [hidden] { display: none !important; }
   #gate, #app { min-height: 100%; }
@@ -41,180 +59,508 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 24px;
+    padding: 48px 22px;
+    background: var(--bg);
   }
   .card {
-    width: min(440px, 100%);
-    background: var(--bg-raised);
-    border: 1px solid var(--line);
-    border-radius: 16px;
-    padding: 28px 24px;
+    width: min(480px, 100%);
+    background: transparent;
+    border: 0;
+    padding: 12px 0 32px;
+    text-align: center;
   }
-  .card h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: -0.03em; }
-  .card p { margin: 0 0 18px; color: var(--muted); }
-  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .card h1 {
+    margin: 0 0 10px;
+    font-family: var(--display);
+    font-size: clamp(40px, 8vw, 56px);
+    font-weight: 600;
+    letter-spacing: -0.005em;
+    line-height: 1.07;
+  }
+  .card p {
+    margin: 0 auto 28px;
+    max-width: 34rem;
+    color: var(--muted);
+    font-size: 19px;
+    line-height: 1.21053;
+    letter-spacing: 0.012em;
+  }
+  .card p.error {
+    color: var(--danger);
+    font-size: 14px;
+    letter-spacing: -0.016em;
+    line-height: 1.29;
+    margin: 12px 0 0;
+    min-height: 1.2em;
+  }
+  label {
+    display: block;
+    font-size: 14px;
+    letter-spacing: -0.016em;
+    color: var(--muted);
+    margin-bottom: 8px;
+    text-align: left;
+  }
   input[type="password"], input[type="text"], textarea {
     width: 100%;
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 10px 12px;
+    background: var(--bg-raised);
+    border: 1px solid var(--hairline);
+    border-radius: 12px;
+    padding: 12px 16px;
+    color: var(--text);
   }
+  input::placeholder, textarea::placeholder { color: var(--faint); }
   textarea { resize: vertical; min-height: 52px; }
-  .row { display: flex; gap: 8px; }
-  .primary, .ghost, .danger {
-    border-radius: 10px;
-    border: 1px solid transparent;
-    padding: 9px 14px;
+  .card code {
+    font-family: inherit;
+    font-size: inherit;
+    letter-spacing: inherit;
+    color: inherit;
   }
-  .primary { background: var(--accent); color: var(--accent-ink); font-weight: 650; }
-  .ghost { background: transparent; border-color: var(--line); color: var(--text); }
-  .danger { background: transparent; border-color: #5a3030; color: var(--danger); }
-  .error { color: var(--danger); min-height: 1.2em; margin: 10px 0 0; font-size: 13px; }
-  #app { display: flex; flex-direction: column; height: 100%; }
+  .row { display: flex; gap: 12px; }
+  .primary, .ghost, .danger {
+    border-radius: 980px;
+    border: 1px solid transparent;
+    padding: 8px 16px;
+    min-width: 28px;
+    font-size: 14px;
+    font-weight: 400;
+    letter-spacing: -0.016em;
+    line-height: 1.29;
+  }
+  .primary { background: var(--accent); color: var(--accent-ink); }
+  .primary:hover { background: var(--accent-hover); }
+  .primary:active { background: var(--accent-active); }
+  .primary:disabled { opacity: 0.42; }
+  .ghost { background: transparent; color: var(--link); }
+  .ghost:hover { text-decoration: underline; }
+  .danger { background: transparent; color: var(--danger); }
+  .danger:hover { text-decoration: underline; }
+  #stop.danger {
+    background: var(--text);
+    color: #fff;
+    text-decoration: none;
+  }
+  #stop.danger:hover { background: #272729; text-decoration: none; }
+  .error { color: var(--danger); min-height: 1.2em; margin: 10px 0 0; font-size: 14px; letter-spacing: -0.016em; }
+  #app { display: flex; flex-direction: column; height: 100%; background: var(--bg); }
   header.app-bar {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--line);
-    background: rgba(16, 17, 20, 0.92);
+    gap: 2px;
+    height: 44px;
+    min-height: 44px;
+    padding: 0 16px 0 22px;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    background: var(--nav);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
     position: sticky;
     top: 0;
     z-index: 2;
+    color: rgba(0, 0, 0, 0.8);
+    font-size: 12px;
+    letter-spacing: -0.01em;
+    line-height: 1;
   }
-  .brand { font-weight: 700; letter-spacing: -0.03em; }
-  .meta { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .brand {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: -0.022em;
+    color: #000;
+    padding-right: 10px;
+  }
+  .meta {
+    color: var(--faint);
+    font-size: 12px;
+    letter-spacing: -0.01em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+  #status { color: rgba(0, 0, 0, 0.8); margin-right: 8px; }
+  #cwd { max-width: min(40vw, 28rem); }
   .spacer { flex: 1; }
-  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); display: inline-block; }
-  .dot.on { background: var(--ok); }
-  .dot.busy { background: var(--warn); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--hairline); display: inline-block; margin-right: 8px; flex: none; }
+  .dot.on { background: #34c759; }
+  .dot.busy { background: #ff9f0a; }
   .dot.bad { background: var(--danger); }
+  header.app-bar .ghost {
+    color: rgba(0, 0, 0, 0.8);
+    height: 44px;
+    padding: 0 10px;
+    border-radius: 0;
+    font-size: 12px;
+    letter-spacing: -0.01em;
+    flex: none;
+  }
+  header.app-bar .ghost:hover { color: #000; text-decoration: none; }
+  #usage {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 10rem;
+  }
+  #usage .usage-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  #usage .week { color: var(--faint); font-weight: 400; }
+  #usage .bar {
+    width: 32px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(0, 0, 0, 0.12);
+    overflow: hidden;
+    flex: none;
+  }
+  #usage .bar > span { display: block; height: 100%; background: #1d1d1f; }
+  #usage .bar.warn > span { background: var(--warn); }
+  #usage .bar.hot > span { background: var(--danger); }
+  .usage-pop {
+    position: absolute;
+    top: 40px;
+    right: 16px;
+    z-index: 5;
+    width: min(260px, calc(100vw - 24px));
+    background: #fff;
+    border-radius: 14px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.16);
+    padding: 14px 16px 12px;
+    font-size: 13px;
+    letter-spacing: -0.012em;
+    line-height: 1.35;
+    color: var(--text);
+  }
+  .usage-pop strong {
+    display: block;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    margin-bottom: 8px;
+  }
+  .usage-pop .meter {
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    margin: 0 0 10px;
+  }
+  .usage-pop .meter > span { display: block; height: 100%; background: #1d1d1f; }
+  .usage-pop .meter.warn > span { background: var(--warn); }
+  .usage-pop .meter.hot > span { background: var(--danger); }
+  .usage-pop p { margin: 0; color: var(--muted); }
+  .usage-pop .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 2px 0;
+  }
+  .usage-pop .reset { margin-top: 8px; }
   #log, #picker {
     flex: 1;
     overflow-y: auto;
-    padding: 18px 16px 8px;
+    padding: 28px 22px 12px;
+    scrollbar-color: rgba(0, 0, 0, 0.28) transparent;
   }
-  .picker-card { max-width: 40rem; margin: 4vh auto 0; }
-  .picker-card h2 { margin: 0 0 8px; letter-spacing: -0.03em; }
-  .picker-card > p { color: var(--muted); margin: 0 0 16px; }
+  .picker-card { max-width: 44rem; margin: 6vh auto 0; }
+  .picker-card h2 {
+    margin: 0 0 8px;
+    font-family: var(--display);
+    font-size: clamp(32px, 5vw, 40px);
+    font-weight: 600;
+    letter-spacing: 0;
+    line-height: 1.1;
+  }
+  .picker-card > p {
+    color: var(--muted);
+    margin: 0 0 22px;
+    font-size: 19px;
+    line-height: 1.21053;
+    letter-spacing: 0.012em;
+  }
+  .picker-card .primary, .picker-card .ghost { margin: 0 12px 4px 0; }
   .session-row {
     display: block;
     width: 100%;
     text-align: left;
     background: var(--bg-raised);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 10px 12px;
-    margin-top: 8px;
+    border: 0;
+    border-radius: 18px;
+    padding: 16px 18px;
+    margin-top: 12px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.04);
+    letter-spacing: -0.022em;
   }
-  .session-row.current { border-color: var(--accent); }
-  .session-row strong { display: block; }
-  .session-row small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
-  .empty { color: var(--muted); max-width: 46rem; margin: 12vh auto 0; text-align: center; }
-  .msg { max-width: 52rem; margin: 0 auto 14px; }
+  .session-row:hover { background: #fafafc; }
+  .session-row:hover strong { color: var(--link); }
+  .session-row.current { box-shadow: inset 0 0 0 2px var(--accent), 0 8px 24px rgba(0, 0, 0, 0.04); }
+  .session-row strong { display: block; font-size: 17px; font-weight: 600; letter-spacing: -0.022em; }
+  .session-row small { display: block; color: var(--muted); font-size: 12px; letter-spacing: -0.01em; margin-top: 3px; }
+  .picker-card .meta { display: block; margin-top: 16px; color: var(--muted); font-size: 17px; letter-spacing: -0.022em; }
+  .empty {
+    color: var(--text);
+    max-width: 36rem;
+    margin: 16vh auto 0;
+    text-align: center;
+  }
+  .empty h2 {
+    margin: 0 0 10px;
+    font-family: var(--display);
+    font-size: clamp(32px, 6vw, 48px);
+    font-weight: 600;
+    letter-spacing: -0.002em;
+    line-height: 1.08;
+  }
+  .empty p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 19px;
+    line-height: 1.21053;
+    letter-spacing: 0.012em;
+  }
+  .msg { max-width: 44rem; margin: 0 auto 18px; }
   .msg.user .bubble {
     background: var(--bg-user);
-    border-radius: 14px 14px 4px 14px;
-    padding: 10px 14px;
+    color: var(--text);
+    border-radius: 18px;
+    padding: 14px 18px;
     white-space: pre-wrap;
-    margin-left: 18%;
+    margin-left: 22%;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
   }
-  .msg .who { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .msg .who {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--faint);
+    margin-bottom: 6px;
+  }
   .msg.assistant .body, .thought .body { white-space: normal; }
-  .msg.assistant .body p { margin: 0 0 0.6em; }
+  .msg.assistant .body { font-size: 17px; line-height: 1.47059; letter-spacing: -0.022em; }
+  .msg.assistant .body p { margin: 0 0 0.7em; }
   .body code, pre.code {
     font-family: var(--mono);
     font-size: 13px;
+    letter-spacing: 0;
   }
-  .body code { background: #242830; padding: 0 4px; border-radius: 4px; }
+  .body code {
+    background: #fff;
+    padding: 0.08em 0.35em;
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  }
   pre.code {
-    background: #0c0d10;
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 10px 12px;
+    background: #fff;
+    border: 0;
+    border-radius: 12px;
+    padding: 14px 16px;
     overflow-x: auto;
     white-space: pre-wrap;
+    color: var(--text);
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
   }
+  pre.code code { background: transparent; padding: 0; border-radius: 0; box-shadow: none; font-size: inherit; }
   .thought, .tool, .plan, .system {
-    border: 1px solid var(--line);
-    border-radius: 12px;
+    border: 0;
+    border-radius: 18px;
     background: var(--bg-raised);
     margin-top: 8px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.04);
   }
-  .thought { padding: 8px 12px; color: var(--muted); }
-  .thought summary { cursor: pointer; }
-  .tool { padding: 8px 12px; }
-  .tool header, .plan header { display: flex; gap: 8px; align-items: baseline; }
-  .tool .kind, .status {
-    font-family: var(--mono);
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+  .thought { color: var(--muted); font-size: 14px; letter-spacing: -0.016em; }
+  .thought summary, .tool summary {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+    padding: 12px 16px;
+    cursor: pointer;
+    list-style: none;
+    color: var(--text);
+  }
+  .thought summary::-webkit-details-marker, .tool summary::-webkit-details-marker { display: none; }
+  .thought summary::before, .tool summary::before {
+    content: "›";
+    flex: none;
+    width: 0.7em;
+    color: var(--faint);
+    font-weight: 600;
+  }
+  .thought[open] > summary::before, .tool[open] > summary::before { content: "⌄"; }
+  .thought summary .label { flex: none; font-weight: 600; }
+  .thought summary .preview, .tool summary .title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 400;
     color: var(--muted);
   }
+  .thought[open] > summary .preview { display: none; }
+  .thought .body { padding: 0 16px 12px; }
+  .tool summary { padding: 14px 16px; }
+  .tool summary .kind { flex: none; }
+  .tool summary .title { font-weight: 600; letter-spacing: -0.022em; color: var(--text); }
+  .plan header { display: flex; gap: 8px; align-items: baseline; }
+  .tool .kind, .status {
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    text-transform: none;
+    color: var(--faint);
+  }
+  .tool summary .status { margin-left: auto; flex: none; }
   .status.completed { color: var(--ok); }
   .status.failed { color: var(--danger); }
-  .status.in_progress, .status.pending { color: var(--warn); }
-  .tool pre, .plan { margin: 8px 0 0; }
+  .status.in_progress { color: var(--accent); }
+  .status.pending { color: var(--warn); }
+  .tool pre, .plan { margin: 10px 0 0; }
   .tool pre {
     font-family: var(--mono);
     font-size: 12px;
+    letter-spacing: 0;
     white-space: pre-wrap;
     max-height: 240px;
     overflow: auto;
-    color: #c9c6bf;
-  }
-  .plan { padding: 8px 12px; }
-  .plan li { margin: 4px 0; }
-  .system { padding: 8px 12px; color: var(--muted); font-size: 13px; }
-  .msg img.shot { max-width: min(100%, 480px); border-radius: 8px; display: block; margin-top: 8px; }
-  footer.composer {
-    border-top: 1px solid var(--line);
-    padding: 12px 16px 16px;
+    color: var(--text);
     background: var(--bg);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin: 0 16px 14px;
   }
-  .composer-inner { max-width: 52rem; margin: 0 auto; display: flex; gap: 8px; align-items: flex-end; }
+  .plan { padding: 14px 16px 16px; }
+  .plan ol { margin: 10px 0 0; padding-left: 1.2em; }
+  .plan li { margin: 6px 0; }
+  .plan li::marker { color: var(--faint); }
+  .system {
+    padding: 12px 16px;
+    color: var(--muted);
+    font-size: 14px;
+    letter-spacing: -0.016em;
+    text-align: center;
+    background: transparent;
+    box-shadow: none;
+  }
+  .msg img.shot {
+    max-width: min(100%, 480px);
+    border-radius: 12px;
+    display: block;
+    margin-top: 10px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+  }
+  footer.composer {
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    padding: 12px 22px calc(16px + env(safe-area-inset-bottom));
+    background: var(--nav);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(180%) blur(20px);
+  }
+  .composer-inner { max-width: 44rem; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
+  .composer-row { display: flex; gap: 10px; align-items: flex-end; }
+  .composer-row textarea { width: auto; flex: 1; min-width: 0; min-height: 48px; max-height: 200px; }
+  .attach {
+    width: 48px;
+    height: 48px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border-radius: 14px;
+    border: 1px solid var(--hairline);
+    background: #fff;
+    color: var(--text);
+  }
+  .attach:hover { border-color: var(--accent); color: var(--accent); }
+  .attach:disabled { opacity: 0.42; }
+  .attach.over { border-color: var(--accent); background: rgba(0, 113, 227, 0.08); }
+  .attachments { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip {
+    position: relative;
+    width: 72px;
+    height: 72px;
+    border-radius: 12px;
+    overflow: hidden;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 20px rgba(0, 0, 0, 0.08);
+  }
+  .chip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .chip button {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.62);
+    color: #fff;
+    font-size: 14px;
+    line-height: 1;
+  }
   footer textarea { min-height: 48px; max-height: 200px; }
   #wire {
-    border-top: 1px solid var(--line);
-    background: #0c0d10;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+    background: #fff;
     max-height: 34vh;
     overflow: auto;
     font-family: var(--mono);
     font-size: 11px;
-    padding: 8px 12px;
-    color: #b7b3aa;
+    letter-spacing: 0;
+    padding: 10px 16px;
+    color: var(--muted);
     white-space: pre-wrap;
   }
   #wire[hidden] { display: none; }
   .modal-back {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.55);
+    background: rgba(0, 0, 0, 0.4);
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
     display: flex;
-    align-items: flex-end;
+    align-items: center;
     justify-content: center;
-    padding: 16px;
+    padding: 22px;
     z-index: 5;
   }
   .modal-back[hidden] { display: none; }
   .modal {
-    width: min(640px, 100%);
+    width: min(560px, 100%);
     max-height: min(80vh, 720px);
     overflow: auto;
-    background: var(--bg-raised);
-    border: 1px solid var(--line);
-    border-radius: 16px;
-    padding: 18px;
+    background: #fff;
+    border: 0;
+    border-radius: 18px;
+    padding: 28px 24px 22px;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
   }
-  .q { margin: 14px 0; }
-  .opt { display: flex; gap: 8px; align-items: flex-start; margin: 6px 0; }
-  .opt small { display: block; color: var(--muted); }
-  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .modal h2, .modal h3 {
+    font-family: var(--display);
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 0 0 8px;
+  }
+  .q { margin: 16px 0; }
+  .opt { display: flex; gap: 10px; align-items: flex-start; margin: 8px 0; }
+  .opt input { accent-color: var(--accent); margin-top: 4px; }
+  .opt small { display: block; color: var(--muted); font-size: 14px; letter-spacing: -0.016em; }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+  .card .actions { justify-content: center; }
   @media (max-width: 700px) {
-    .msg.user .bubble { margin-left: 0; }
-    header.app-bar { flex-wrap: wrap; }
+    .msg.user .bubble { margin-left: 8%; }
+    header.app-bar { padding-left: 12px; }
+    #cwd { display: none; }
+    #usage .week { display: none; }
+    .usage-pop { right: 8px; }
+    .empty { margin-top: 10vh; }
   }
 </style>
 </head>
@@ -236,6 +582,8 @@
     <span class="meta" id="status">Connecting</span>
     <span class="meta" id="cwd"></span>
     <span class="spacer"></span>
+    <button class="ghost" id="usage" type="button" hidden aria-expanded="false" aria-controls="usage-pop">Weekly usage</button>
+    <div id="usage-pop" class="usage-pop" hidden></div>
     <button class="ghost" id="wire-btn" type="button">Wire</button>
     <button class="ghost" id="sessions-btn" type="button">Sessions</button>
     <button class="ghost" id="new-btn" type="button">New</button>
@@ -251,14 +599,28 @@
     </div>
   </div>
   <main id="log">
-    <div class="empty" id="empty">The session streams here. Send a message to start.</div>
+    <div class="empty" id="empty">
+      <h2>Send a message.</h2>
+      <p>This conversation stays in this tab.</p>
+    </div>
   </main>
   <pre id="wire" hidden></pre>
   <footer class="composer">
     <form class="composer-inner" id="composer">
-      <textarea id="prompt" rows="2" placeholder="Message Grok" disabled></textarea>
-      <button class="primary" id="send" type="submit" disabled>Send</button>
-      <button class="danger" id="stop" type="button" hidden>Stop</button>
+      <div id="attachments" class="attachments" hidden></div>
+      <div class="composer-row">
+        <button class="attach" id="attach" type="button" aria-label="Attach image" title="Attach image" disabled>
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <rect x="3.5" y="5" width="17" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+            <circle cx="8.5" cy="9.5" r="1.4" fill="currentColor"/>
+            <path d="M3.8 16.2 8.6 11.4l3.2 3.2 2.6-2.4 5.8 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <input id="file" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/*" multiple hidden>
+        <textarea id="prompt" rows="2" placeholder="Message Grok" disabled></textarea>
+        <button class="primary" id="send" type="submit" disabled>Send</button>
+        <button class="danger" id="stop" type="button" hidden>Stop</button>
+      </div>
     </form>
   </footer>
 </div>
@@ -278,7 +640,12 @@
   const promptEl = document.getElementById("prompt");
   const sendBtn = document.getElementById("send");
   const stopBtn = document.getElementById("stop");
+  const attachBtn = document.getElementById("attach");
+  const fileEl = document.getElementById("file");
+  const attachmentsEl = document.getElementById("attachments");
   const wireEl = document.getElementById("wire");
+  const usageBtn = document.getElementById("usage");
+  const usagePop = document.getElementById("usage-pop");
   const modal = document.getElementById("modal");
   const modalCard = document.getElementById("modal-card");
 
@@ -300,7 +667,15 @@
     thought: null,
     stick: true,
     wireCount: 0,
+    images: [],
+    imageSeq: 0,
+    usageTimer: 0,
+    usageAt: 0,
   };
+
+  const MAX_IMAGES = 6;
+  const MAX_IMAGE_BYTES = 1400000;
+  const MAX_IMAGE_SIDE = 1600;
 
   function params() {
     return new URLSearchParams(location.search);
@@ -329,6 +704,114 @@
   function setStatus(text, kind) {
     statusEl.textContent = text;
     dot.className = "dot" + (kind ? " " + kind : "");
+  }
+
+  function formatPct(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return "";
+    const rounded = Math.round(n * 10) / 10;
+    return String(rounded).replace(/\.0$/, "") + "%";
+  }
+
+  function productLabel(name) {
+    const raw = String(name || "").replace(/^PRODUCT_/, "");
+    const known = {
+      GrokBuild: "Grok Build",
+      GROK_BUILD: "Grok Build",
+      GrokChat: "Grok Chat",
+      GROK_CHAT: "Grok Chat",
+    };
+    if (known[raw]) return known[raw];
+    const spaced = raw.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim();
+    return spaced || "Other";
+  }
+
+  function formatReset(iso) {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "";
+    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const hh = String(date.getUTCHours()).padStart(2, "0");
+    const mm = String(date.getUTCMinutes()).padStart(2, "0");
+    return days[date.getUTCDay()] + " " + date.getUTCDate() + " " + months[date.getUTCMonth()] + ", " + hh + ":" + mm + " UTC";
+  }
+
+  function closeUsage() {
+    usagePop.hidden = true;
+    usageBtn.setAttribute("aria-expanded", "false");
+  }
+
+  function paintUsage(billing) {
+    const config = (billing && billing.config) || {};
+    const pct = Number(config.creditUsagePercent);
+    if (!Number.isFinite(pct)) return;
+    const period = config.currentPeriod || {};
+    const weekly = !period.type || String(period.type).indexOf("WEEKLY") !== -1;
+    const label = formatPct(pct);
+    const tone = pct >= 90 ? " hot" : pct >= 75 ? " warn" : "";
+    const products = (Array.isArray(config.productUsage) ? config.productUsage : []).map((row) => {
+      const share = formatPct(row && row.usagePercent);
+      if (!share) return null;
+      return { name: productLabel(row.product), share };
+    }).filter(Boolean);
+    const reset = formatReset(period.end);
+    usageBtn.hidden = false;
+    usageBtn.replaceChildren();
+    const text = document.createElement("span");
+    text.className = "usage-label";
+    text.appendChild(document.createTextNode(label));
+    if (weekly) {
+      const week = document.createElement("span");
+      week.className = "week";
+      week.textContent = " this week";
+      text.appendChild(week);
+    }
+    const bar = document.createElement("span");
+    bar.className = "bar" + tone;
+    bar.setAttribute("aria-hidden", "true");
+    const fill = document.createElement("span");
+    fill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+    bar.appendChild(fill);
+    usageBtn.append(text, bar);
+    const summary = (weekly ? "Weekly pool " : "Usage ") + label;
+    const detail = products.map((row) => row.name + " " + row.share).join(", ");
+    usageBtn.title = [summary, detail, reset ? "Resets " + reset : ""].filter(Boolean).join(". ");
+    usageBtn.setAttribute("aria-label", usageBtn.title);
+    usagePop.replaceChildren();
+    const head = document.createElement("strong");
+    head.textContent = summary;
+    const meter = document.createElement("div");
+    meter.className = "meter" + tone;
+    const meterFill = document.createElement("span");
+    meterFill.style.width = Math.max(0, Math.min(100, pct)) + "%";
+    meter.appendChild(meterFill);
+    usagePop.append(head, meter);
+    for (const row of products) {
+      const line = document.createElement("div");
+      line.className = "row";
+      const name = document.createElement("span");
+      name.textContent = row.name;
+      const share = document.createElement("span");
+      share.textContent = row.share;
+      line.append(name, share);
+      usagePop.appendChild(line);
+    }
+    if (reset) {
+      const when = document.createElement("p");
+      when.className = "reset";
+      when.textContent = "Resets " + reset;
+      usagePop.appendChild(when);
+    }
+  }
+
+  async function refreshUsage() {
+    if (!ui.ws || ui.ws.readyState !== WebSocket.OPEN) return;
+    ui.usageAt = Date.now();
+    try {
+      paintUsage(await rpc("_x.ai/billing", {}));
+    } catch {
+      // Keep the last reading. A quiet header is better than an error in the transcript.
+    }
   }
 
   function escapeHtml(s) {
@@ -392,8 +875,7 @@
     ui.userStream = null;
   }
 
-  function appendUser(text) {
-    if (!text) return;
+  function ensureUserBubble() {
     closeStream();
     if (!ui.userStream) {
       const wrap = document.createElement("div");
@@ -404,8 +886,162 @@
       addEl(wrap);
       ui.userStream = bubble;
     }
-    ui.userStream.textContent += text;
+    return ui.userStream;
+  }
+
+  function appendUser(text) {
+    if (!text) return;
+    ensureUserBubble().appendChild(document.createTextNode(text));
     follow();
+  }
+
+  function imageSrc(content) {
+    const mime = (content && (content.mimeType || content.mime_type)) || "image/png";
+    if (content && content.data) return "data:" + mime + ";base64," + content.data;
+    const uri = (content && content.uri) || "";
+    if (uri.startsWith("data:") || uri.startsWith("http://") || uri.startsWith("https://")) return uri;
+    return "";
+  }
+
+  function appendUserImage(content) {
+    const src = imageSrc(content);
+    if (!src) return;
+    const img = document.createElement("img");
+    img.className = "shot";
+    img.alt = "Attached image";
+    img.src = src;
+    ensureUserBubble().appendChild(img);
+    follow();
+  }
+
+  function hiddenFromScrollback(update) {
+    const meta = (update && (update._meta || update.meta)) || {};
+    return meta.hideFromScrollback === true;
+  }
+
+  function paintAttachments() {
+    attachmentsEl.replaceChildren();
+    attachmentsEl.hidden = ui.images.length === 0;
+    for (const image of ui.images) {
+      const chip = document.createElement("div");
+      chip.className = "chip";
+      const img = document.createElement("img");
+      img.src = image.preview;
+      img.alt = image.name || "Attached image";
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.setAttribute("aria-label", "Remove image");
+      remove.textContent = "×";
+      remove.addEventListener("click", () => {
+        ui.images = ui.images.filter((item) => item.id !== image.id);
+        paintAttachments();
+      });
+      chip.append(img, remove);
+      attachmentsEl.appendChild(chip);
+    }
+  }
+
+  function clearAttachments() {
+    ui.images = [];
+    paintAttachments();
+  }
+
+  function blobToDataUrl(blob) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(reader.error || new Error("Could not read the image."));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function canvasBlob(canvas, type, quality) {
+    return new Promise((resolve) => canvas.toBlob((blob) => resolve(blob), type, quality));
+  }
+
+  async function encodeImage(file) {
+    if (!file || !file.type || !file.type.startsWith("image/")) {
+      throw new Error("Choose an image file.");
+    }
+    let bitmap;
+    try {
+      bitmap = await createImageBitmap(file);
+    } catch {
+      throw new Error("That image could not be read.");
+    }
+    try {
+      if (bitmap.width < 8 || bitmap.height < 8) {
+        throw new Error("That image is too small to attach.");
+      }
+      const pixels = bitmap.width * bitmap.height;
+      const keepOriginal = file.size <= MAX_IMAGE_BYTES
+        && bitmap.width <= MAX_IMAGE_SIDE
+        && bitmap.height <= MAX_IMAGE_SIDE
+        && pixels <= 2408448
+        && /^image\/(png|jpeg|gif|webp)$/.test(file.type);
+      if (keepOriginal) {
+        const dataUrl = await blobToDataUrl(file);
+        const comma = dataUrl.indexOf(",");
+        return {
+          mime: file.type === "image/jpg" ? "image/jpeg" : file.type,
+          data: dataUrl.slice(comma + 1),
+          preview: dataUrl,
+          name: file.name || "image",
+        };
+      }
+      let side = MAX_IMAGE_SIDE;
+      let quality = 0.86;
+      let blob = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const scale = Math.min(1, side / Math.max(bitmap.width, bitmap.height));
+        const w = Math.max(8, Math.round(bitmap.width * scale));
+        const h = Math.max(8, Math.round(bitmap.height * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#fff";
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(bitmap, 0, 0, w, h);
+        blob = await canvasBlob(canvas, "image/jpeg", quality);
+        if (blob && blob.size <= MAX_IMAGE_BYTES) break;
+        quality = Math.max(0.4, quality - 0.12);
+        side = Math.round(side * 0.75);
+      }
+      if (!blob) throw new Error("That image could not be prepared.");
+      const dataUrl = await blobToDataUrl(blob);
+      const comma = dataUrl.indexOf(",");
+      return {
+        mime: "image/jpeg",
+        data: dataUrl.slice(comma + 1),
+        preview: dataUrl,
+        name: file.name || "image",
+      };
+    } finally {
+      bitmap.close();
+    }
+  }
+
+  async function addImageFiles(files) {
+    const list = Array.from(files || []).filter((file) => file && file.type && file.type.startsWith("image/"));
+    if (!list.length) {
+      systemLine("Choose an image file.");
+      return;
+    }
+    for (const file of list) {
+      if (ui.images.length >= MAX_IMAGES) {
+        systemLine("You can attach up to " + MAX_IMAGES + " images.");
+        break;
+      }
+      try {
+        const encoded = await encodeImage(file);
+        ui.imageSeq += 1;
+        ui.images.push({ id: ui.imageSeq, ...encoded });
+        paintAttachments();
+      } catch (err) {
+        systemLine(err && err.message ? err.message : "That image could not be attached.");
+      }
+    }
   }
 
   function assistantBody() {
@@ -442,15 +1078,28 @@
     follow();
   }
 
+  function previewWords(text) {
+    const plain = String(text)
+      .replace(/```[\s\S]*?```/g, " ")
+      .replace(/[`*_#>\[\]()]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return plain.split(" ").filter(Boolean).slice(0, 10).join(" ");
+  }
+
   function appendThought(text) {
     if (!text) return;
     if (!ui.thought) {
       closeUser();
       const details = document.createElement("details");
       details.className = "thought";
-      details.open = true;
       const summary = document.createElement("summary");
-      summary.textContent = "Thinking";
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = "Thinking";
+      const preview = document.createElement("span");
+      preview.className = "preview";
+      summary.append(label, preview);
       const body = document.createElement("div");
       body.className = "body";
       details.append(summary, body);
@@ -458,10 +1107,11 @@
       wrap.className = "msg";
       wrap.appendChild(details);
       addEl(wrap);
-      ui.thought = { body, text: "" };
+      ui.thought = { body, preview, text: "" };
     }
     ui.thought.text += text;
     ui.thought.body.innerHTML = renderMarkdown(ui.thought.text);
+    ui.thought.preview.textContent = previewWords(ui.thought.text);
     follow();
   }
 
@@ -496,17 +1146,17 @@
   function paintTool(tool) {
     let el = tool.el;
     if (!el) {
-      el = document.createElement("div");
+      el = document.createElement("details");
       el.className = "tool";
-      const header = document.createElement("header");
+      const summary = document.createElement("summary");
       const kind = document.createElement("span");
       kind.className = "kind";
       const title = document.createElement("span");
       title.className = "title";
       const status = document.createElement("span");
       const pre = document.createElement("pre");
-      header.append(kind, title, status);
-      el.append(header, pre);
+      summary.append(kind, title, status);
+      el.append(summary, pre);
       const wrap = document.createElement("div");
       wrap.className = "msg";
       wrap.appendChild(el);
@@ -588,9 +1238,10 @@
     if (kind === "agent_message_chunk") chunkPieces(update);
     else if (kind === "agent_thought_chunk") chunkPieces(update);
     else if (kind === "user_message_chunk") {
-      if (!ui.echo) {
-        const text = (update.content && update.content.text) || "";
-        appendUser(text);
+      if (!ui.echo && !hiddenFromScrollback(update)) {
+        const content = update.content || {};
+        if (content.type === "image") appendUserImage(content);
+        else appendUser(content.text || "");
       }
     } else if (kind === "tool_call" || kind === "tool_call_update") upsertTool(update);
     else if (kind === "plan") renderPlan(update);
@@ -606,14 +1257,21 @@
     }
   }
 
-  function userBubble(text) {
+  function userBubble(text, images) {
     closeUser();
     closeStream();
     const wrap = document.createElement("div");
     wrap.className = "msg user";
     const bubble = document.createElement("div");
     bubble.className = "bubble";
-    bubble.textContent = text;
+    if (text) bubble.appendChild(document.createTextNode(text));
+    for (const image of images || []) {
+      const img = document.createElement("img");
+      img.className = "shot";
+      img.alt = image.name || "Attached image";
+      img.src = image.preview;
+      bubble.appendChild(img);
+    }
     wrap.appendChild(bubble);
     addEl(wrap);
   }
@@ -622,7 +1280,8 @@
     ui.wireCount += 1;
     const btn = document.getElementById("wire-btn");
     btn.textContent = "Wire " + ui.wireCount;
-    const line = (dir === "out" ? "→ " : "← ") + raw;
+    const shown = String(raw).replace(/"data":"([^"]{48})[^"]*"/g, "\"data\":\"$1…\"");
+    const line = (dir === "out" ? "→ " : "← ") + shown;
     wireEl.textContent += (wireEl.textContent ? "\n" : "") + line;
     const extra = wireEl.textContent.length - 200000;
     if (extra > 0) wireEl.textContent = wireEl.textContent.slice(extra);
@@ -912,8 +1571,21 @@
     stopBtn.hidden = !on;
     promptEl.disabled = !ui.ready || on;
     sendBtn.disabled = !ui.ready || on;
+    attachBtn.disabled = !ui.ready;
     if (on) setStatus("Working", "busy");
     else if (ui.ready) setStatus(ui.sessionId ? "Ready" : "Connected", "on");
+  }
+
+  function emptyHint() {
+    const hint = document.createElement("div");
+    hint.className = "empty";
+    hint.id = "empty";
+    const title = document.createElement("h2");
+    title.textContent = "Send a message.";
+    const copy = document.createElement("p");
+    copy.textContent = "This conversation stays in this tab.";
+    hint.append(title, copy);
+    return hint;
   }
 
   function clearTranscript() {
@@ -921,12 +1593,9 @@
     ui.stream = null;
     ui.userStream = null;
     ui.thought = null;
+    clearAttachments();
     logEl.replaceChildren();
-    const hint = document.createElement("div");
-    hint.className = "empty";
-    hint.id = "empty";
-    hint.textContent = "The session streams here. Send a message to start.";
-    logEl.appendChild(hint);
+    logEl.appendChild(emptyHint());
   }
 
   function setPicker(on) {
@@ -1012,6 +1681,7 @@
     setStatus("Loading conversation", "busy");
     promptEl.disabled = true;
     sendBtn.disabled = true;
+    attachBtn.disabled = true;
     await rpc("session/load", { sessionId: id, cwd: ui.cwd, mcpServers: [] });
     ui.ready = true;
     setTurn(false);
@@ -1026,6 +1696,7 @@
     setStatus("Starting session", "busy");
     promptEl.disabled = true;
     sendBtn.disabled = true;
+    attachBtn.disabled = true;
     const created = await rpc("session/new", { cwd: ui.cwd, mcpServers: [] });
     const id = created.sessionId || created.session_id || "";
     if (!id) throw new Error("session was not created");
@@ -1039,6 +1710,7 @@
     ui.ready = false;
     promptEl.disabled = true;
     sendBtn.disabled = true;
+    attachBtn.disabled = true;
     setPicker(true);
     setStatus("Choose a conversation", "on");
     const list = document.getElementById("picker-list");
@@ -1097,6 +1769,14 @@
       clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false },
     });
     ui.backoff = 1000;
+    refreshUsage();
+    if (!ui.usageTimer) {
+      ui.usageTimer = setInterval(() => {
+        if (document.visibilityState === "hidden") return;
+        if (Date.now() - ui.usageAt < 4 * 60 * 1000) return;
+        refreshUsage();
+      }, 60 * 1000);
+    }
     if (reload && ui.sessionId) {
       await rpc("session/load", {
         sessionId: ui.sessionId,
@@ -1139,6 +1819,7 @@
       ui.ready = false;
       promptEl.disabled = true;
       sendBtn.disabled = true;
+      attachBtn.disabled = true;
       for (const [id, waiter] of ui.pending) {
         ui.pending.delete(id);
         waiter.reject(new Error("connection closed"));
@@ -1182,6 +1863,23 @@
     }
   }
 
+  usageBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const open = usagePop.hidden;
+    usagePop.hidden = !open;
+    usageBtn.setAttribute("aria-expanded", open ? "true" : "false");
+    if (open && Date.now() - ui.usageAt > 15000) refreshUsage();
+  });
+  document.addEventListener("click", (event) => {
+    if (usagePop.hidden) return;
+    if (event.target === usageBtn || usageBtn.contains(event.target)) return;
+    if (usagePop.contains(event.target)) return;
+    closeUsage();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !usagePop.hidden) closeUsage();
+  });
+
   document.getElementById("gate-form").addEventListener("submit", (event) => {
     event.preventDefault();
     const key = document.getElementById("key").value.trim();
@@ -1193,13 +1891,20 @@
   document.getElementById("composer").addEventListener("submit", (event) => {
     event.preventDefault();
     const text = promptEl.value.trim();
-    if (!text || !ui.ready || ui.turn) return;
+    const images = ui.images.slice();
+    if ((!text && !images.length) || !ui.ready || ui.turn) return;
     promptEl.value = "";
-    userBubble(text);
+    clearAttachments();
+    userBubble(text, images);
+    const prompt = [];
+    if (text) prompt.push({ type: "text", text });
+    for (const image of images) {
+      prompt.push({ type: "image", mimeType: image.mime, data: image.data });
+    }
     setTurn(true);
     rpc("session/prompt", {
       sessionId: ui.sessionId,
-      prompt: [{ type: "text", text }],
+      prompt,
     }).then((result) => {
       const reason = result && (result.stopReason || result.stop_reason);
       if (reason && reason !== "end_turn" && reason !== "endTurn") systemLine("Stopped: " + reason);
@@ -1213,6 +1918,63 @@
       event.preventDefault();
       document.getElementById("composer").requestSubmit();
     }
+  });
+
+  attachBtn.addEventListener("click", () => {
+    if (attachBtn.disabled) return;
+    fileEl.click();
+  });
+
+  fileEl.addEventListener("change", () => {
+    const files = fileEl.files;
+    fileEl.value = "";
+    if (files && files.length) addImageFiles(files);
+  });
+
+  promptEl.addEventListener("paste", (event) => {
+    const clipboard = event.clipboardData;
+    if (!clipboard) return;
+    const files = [];
+    for (const item of clipboard.items || []) {
+      if (item.kind === "file" && item.type && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) files.push(file);
+      }
+    }
+    if (!files.length) return;
+    event.preventDefault();
+    const text = clipboard.getData("text/plain");
+    if (text) {
+      const start = promptEl.selectionStart == null ? promptEl.value.length : promptEl.selectionStart;
+      const end = promptEl.selectionEnd == null ? start : promptEl.selectionEnd;
+      promptEl.value = promptEl.value.slice(0, start) + text + promptEl.value.slice(end);
+      const caret = start + text.length;
+      promptEl.selectionStart = caret;
+      promptEl.selectionEnd = caret;
+    }
+    addImageFiles(files);
+  });
+
+  const composer = document.getElementById("composer");
+  composer.addEventListener("dragover", (event) => {
+    const items = event.dataTransfer && event.dataTransfer.items;
+    if (!items || ![...items].some((item) => item.kind === "file")) return;
+    event.preventDefault();
+    if (!attachBtn.disabled) attachBtn.classList.add("over");
+  });
+  composer.addEventListener("dragleave", () => attachBtn.classList.remove("over"));
+  composer.addEventListener("drop", (event) => {
+    attachBtn.classList.remove("over");
+    const dropped = [...((event.dataTransfer && event.dataTransfer.files) || [])];
+    if (!dropped.length) return;
+    event.preventDefault();
+    if (attachBtn.disabled) return;
+    const images = dropped.filter((file) => file.type && file.type.startsWith("image/"));
+    if (!images.length) {
+      systemLine("Choose an image file.");
+      return;
+    }
+    addImageFiles(images);
   });
 
   stopBtn.addEventListener("click", () => {
